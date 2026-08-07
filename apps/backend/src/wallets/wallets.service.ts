@@ -113,6 +113,25 @@ export class WalletsService {
     return serialized;
   }
 
+  /**
+   * Credita a carteira sem uma carteira de origem — não é uma
+   * "transferência" (não usa idempotência/lock/outbox/ledger daquele
+   * fluxo) porque não existe rail de captação externa real neste projeto
+   * (PIX, cartão, etc. estão fora do escopo). Existe só pra dar saldo
+   * inicial e permitir testar transferências de verdade. Um `UPDATE ...
+   * SET balance = balance + amount` é atômico por natureza no Postgres —
+   * não precisa do lock otimista usado nas transferências, que existe
+   * especificamente para o padrão "ler saldo, decidir, escrever de volta".
+   */
+  async deposit(walletId: string, amountCents: bigint): Promise<Wallet> {
+    const wallet = await this.prisma.wallet.update({
+      where: { id: walletId },
+      data: { balance: { increment: amountCents } },
+    });
+    await this.invalidateWalletCaches(walletId);
+    return wallet;
+  }
+
   async invalidateWalletCaches(walletId: string): Promise<void> {
     await Promise.all([
       this.redisService.del(balanceCacheKey(walletId)),

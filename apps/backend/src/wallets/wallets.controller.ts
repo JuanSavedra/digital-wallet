@@ -1,8 +1,12 @@
 import {
+  Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
   Param,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -10,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { RequestUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { DepositDto } from './dto/deposit.dto';
 import { LookupQueryDto } from './dto/lookup-query.dto';
 import { StatementQueryDto } from './dto/statement-query.dto';
 import { toWalletResponse } from './dto/wallet-response';
@@ -47,6 +52,25 @@ export class WalletsController {
       query.page,
     );
     return { page: query.page, entries };
+  }
+
+  /**
+   * Não é uma feature de produto (não existe rail de captação externa
+   * neste projeto — PIX, cartão etc. estão fora do escopo). Existe só
+   * para dar saldo inicial e permitir testar transferências manualmente.
+   */
+  @HttpCode(HttpStatus.OK)
+  @Post('me/deposit')
+  async deposit(@CurrentUser() user: RequestUser, @Body() dto: DepositDto) {
+    const wallet = await this.walletsService.findByUserId(user.userId);
+    if (!wallet) {
+      throw new NotFoundException('Carteira não encontrada');
+    }
+    const updated = await this.walletsService.deposit(
+      wallet.id,
+      BigInt(dto.amount),
+    );
+    return toWalletResponse(updated);
   }
 
   @Get('lookup')

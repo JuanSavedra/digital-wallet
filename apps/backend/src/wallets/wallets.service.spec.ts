@@ -27,6 +27,7 @@ describe('WalletsService', () => {
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
         findFirst: jest.fn(),
+        update: jest.fn(),
       },
       ledgerEntry: { findMany: jest.fn() },
     };
@@ -168,6 +169,24 @@ describe('WalletsService', () => {
         expect.any(String),
         expect.any(Number),
       );
+    });
+  });
+
+  describe('deposit', () => {
+    it('increments the balance and invalidates the cache', async () => {
+      prisma.wallet.update.mockResolvedValue({ ...wallet, balance: 5_000n });
+
+      const result = await walletsService.deposit('wallet-1', 5_000n);
+
+      expect(prisma.wallet.update).toHaveBeenCalledWith({
+        where: { id: 'wallet-1' },
+        data: { balance: { increment: 5_000n } },
+      });
+      expect(redisService.del).toHaveBeenCalledWith('wallet:balance:wallet-1');
+      expect(redisService.del).toHaveBeenCalledWith(
+        'wallet:statement:wallet-1:page:1',
+      );
+      expect(result.balance).toBe(5_000n);
     });
   });
 

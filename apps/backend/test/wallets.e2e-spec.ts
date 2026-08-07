@@ -185,4 +185,57 @@ describe('Wallets ownership (e2e, infra real)', () => {
       expect(response.status).toBe(400);
     });
   });
+
+  describe('POST /wallets/me/deposit', () => {
+    it('credits the caller wallet and the new balance is reflected right away (cache invalidated)', async () => {
+      const token = await registerAndSignToken(
+        `wallets-j-${randomUUID()}@example.com`,
+      );
+
+      const first = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposit')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ amount: 2_000 });
+      expect(first.status).toBe(200);
+      expect((first.body as { balance: string }).balance).toBe('2000');
+
+      const second = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposit')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ amount: 500 });
+      expect(second.status).toBe(200);
+      expect((second.body as { balance: string }).balance).toBe('2500');
+
+      const meResponse = await request(app.getHttpServer())
+        .get('/api/v1/wallets/me')
+        .set('Authorization', `Bearer ${token}`);
+      expect((meResponse.body as { balance: string }).balance).toBe('2500');
+    });
+
+    it('rejects a non-positive amount', async () => {
+      const token = await registerAndSignToken(
+        `wallets-k-${randomUUID()}@example.com`,
+      );
+
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposit')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ amount: 0 });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('rejects a deposit above the per-request cap', async () => {
+      const token = await registerAndSignToken(
+        `wallets-l-${randomUUID()}@example.com`,
+      );
+
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposit')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ amount: 10_000_01 });
+
+      expect(response.status).toBe(400);
+    });
+  });
 });
