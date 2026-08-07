@@ -10,14 +10,15 @@ describe('AbacatePayService', () => {
   beforeEach(() => {
     configService = {
       getOrThrow: jest.fn((key: string) => {
-        if (key === 'ABACATEPAY_BASE_URL') return 'https://api.abacatepay.com/v2';
+        if (key === 'ABACATEPAY_BASE_URL')
+          return 'https://api.abacatepay.com/v2';
         if (key === 'ABACATEPAY_API_KEY') return 'test-key';
         throw new Error(`unexpected key ${key}`);
       }),
     };
     service = new AbacatePayService(configService as unknown as ConfigService);
     fetchMock = jest.fn();
-    global.fetch = fetchMock as unknown as typeof fetch;
+    global.fetch = fetchMock;
   });
 
   afterEach(() => {
@@ -34,7 +35,11 @@ describe('AbacatePayService', () => {
   describe('createProduct', () => {
     it('posts to /products/create and returns data', async () => {
       fetchMock.mockResolvedValue(
-        jsonResponse(200, { success: true, data: { id: 'prod_1' }, error: null }),
+        jsonResponse(200, {
+          success: true,
+          data: { id: 'prod_1' },
+          error: null,
+        }),
       );
 
       const result = await service.createProduct('ext-1', 'Depósito', 1000);
@@ -44,7 +49,9 @@ describe('AbacatePayService', () => {
         'https://api.abacatepay.com/v2/products/create',
         expect.objectContaining({
           method: 'POST',
-          headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-key',
+          }),
           body: JSON.stringify({
             externalId: 'ext-1',
             name: 'Depósito',
@@ -61,7 +68,11 @@ describe('AbacatePayService', () => {
       fetchMock.mockResolvedValue(
         jsonResponse(200, {
           success: true,
-          data: { id: 'checkout_1', url: 'https://pay.example/checkout_1', status: 'PENDING' },
+          data: {
+            id: 'checkout_1',
+            url: 'https://pay.example/checkout_1',
+            status: 'PENDING',
+          },
           error: null,
         }),
       );
@@ -77,7 +88,8 @@ describe('AbacatePayService', () => {
         url: 'https://pay.example/checkout_1',
         status: 'PENDING',
       });
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(requestInit.body as string);
       expect(body).toEqual({
         items: [{ id: 'prod_1', quantity: 1 }],
         methods: ['PIX'],
@@ -94,7 +106,11 @@ describe('AbacatePayService', () => {
           success: true,
           data: [
             { id: 'checkout_1', url: 'https://pay.example/1', status: 'PAID' },
-            { id: 'checkout_2', url: 'https://pay.example/2', status: 'PENDING' },
+            {
+              id: 'checkout_2',
+              url: 'https://pay.example/2',
+              status: 'PENDING',
+            },
           ],
           error: null,
         }),
@@ -123,12 +139,16 @@ describe('AbacatePayService', () => {
   describe('error handling', () => {
     it('throws HttpException when the envelope reports failure', async () => {
       fetchMock.mockResolvedValue(
-        jsonResponse(400, { success: false, data: null, error: 'CARD is not available for this store' }),
+        jsonResponse(400, {
+          success: false,
+          data: null,
+          error: 'CARD is not available for this store',
+        }),
       );
 
-      await expect(service.createProduct('ext-1', 'Depósito', 1000)).rejects.toThrow(
-        HttpException,
-      );
+      await expect(
+        service.createProduct('ext-1', 'Depósito', 1000),
+      ).rejects.toThrow(HttpException);
     });
 
     it('throws HttpException when the HTTP response is not ok even if success is true', async () => {
@@ -136,7 +156,9 @@ describe('AbacatePayService', () => {
         jsonResponse(502, { success: true, data: null, error: null }),
       );
 
-      await expect(service.findCheckoutById('x')).rejects.toThrow(HttpException);
+      await expect(service.findCheckoutById('x')).rejects.toThrow(
+        HttpException,
+      );
     });
   });
 });

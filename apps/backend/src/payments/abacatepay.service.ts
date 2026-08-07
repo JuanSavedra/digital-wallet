@@ -83,7 +83,9 @@ export class AbacatePayService {
     path: string,
     options: { method: 'GET' | 'POST'; body?: unknown },
   ): Promise<T> {
-    const baseUrl = this.configService.getOrThrow<string>('ABACATEPAY_BASE_URL');
+    const baseUrl = this.configService.getOrThrow<string>(
+      'ABACATEPAY_BASE_URL',
+    );
     const apiKey = this.configService.getOrThrow<string>('ABACATEPAY_API_KEY');
 
     const response = await fetch(`${baseUrl}${path}`, {

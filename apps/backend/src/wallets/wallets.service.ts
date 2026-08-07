@@ -117,26 +117,22 @@ export class WalletsService {
     ]);
 
     const merged: StatementEntry[] = [
-      ...ledgerEntries.map(
-        (entry): StatementEntry => ({
-          id: entry.id,
-          source: 'transfer',
-          transactionId: entry.transactionId,
-          direction: entry.direction,
-          amount: entry.amount.toString(),
-          createdAt: entry.createdAt,
-        }),
-      ),
-      ...deposits.map(
-        (deposit): StatementEntry => ({
-          id: deposit.id,
-          source: 'deposit',
-          transactionId: null,
-          direction: 'CREDIT',
-          amount: deposit.amount.toString(),
-          createdAt: deposit.paidAt ?? deposit.createdAt,
-        }),
-      ),
+      ...ledgerEntries.map((entry): StatementEntry => ({
+        id: entry.id,
+        source: 'transfer',
+        transactionId: entry.transactionId,
+        direction: entry.direction,
+        amount: entry.amount.toString(),
+        createdAt: entry.createdAt,
+      })),
+      ...deposits.map((deposit): StatementEntry => ({
+        id: deposit.id,
+        source: 'deposit',
+        transactionId: null,
+        direction: 'CREDIT',
+        amount: deposit.amount.toString(),
+        createdAt: deposit.paidAt ?? deposit.createdAt,
+      })),
     ]
       .sort((a, b) => b.createdAt.valueOf() - a.createdAt.valueOf())
       .slice(skip, skip + STATEMENT_PAGE_SIZE);

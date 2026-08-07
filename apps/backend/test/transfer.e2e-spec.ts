@@ -322,9 +322,7 @@ describe('Transfers (e2e, infra real)', () => {
     );
 
     expect(metricsResponse.status).toBe(200);
-    expect(metricsResponse.text).toContain(
-      'wallet_transfer_duration_seconds',
-    );
+    expect(metricsResponse.text).toContain('wallet_transfer_duration_seconds');
     expect(metricsResponse.text).toMatch(
       /wallet_transfer_duration_seconds_count \d+/,
     );

@@ -73,10 +73,7 @@ export class WalletsController {
   }
 
   @Get('me/deposits/:id')
-  async getDeposit(
-    @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
-  ) {
+  async getDeposit(@CurrentUser() user: RequestUser, @Param('id') id: string) {
     const deposit = await this.depositsService.getDepositForUser(
       id,
       user.userId,

@@ -78,9 +78,7 @@ describe('LoggingInterceptor', () => {
     const { context } = createContext({ [REQUEST_ID_HEADER]: 'existing-id' });
     const handler: CallHandler = {
       handle: () =>
-        from(
-          Promise.resolve().then(() => RequestContext.getCorrelationId()),
-        ),
+        from(Promise.resolve().then(() => RequestContext.getCorrelationId())),
     };
 
     interceptor.intercept(context, handler).subscribe((correlationId) => {

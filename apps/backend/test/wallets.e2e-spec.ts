@@ -28,28 +28,28 @@ import { poll } from './utils/poll';
 class FakeAbacatePayService {
   private readonly statuses = new Map<string, AbacatePayCheckout['status']>();
 
-  async createProduct(): Promise<{ id: string }> {
-    return { id: `prod_${randomUUID()}` };
+  createProduct(): Promise<{ id: string }> {
+    return Promise.resolve({ id: `prod_${randomUUID()}` });
   }
 
-  async createPixCheckout(): Promise<AbacatePayCheckout> {
+  createPixCheckout(): Promise<AbacatePayCheckout> {
     const id = `checkout_${randomUUID()}`;
     this.statuses.set(id, 'PENDING');
-    return {
+    return Promise.resolve({
       id,
       url: `https://fake.abacatepay.test/checkouts/${id}`,
       status: 'PENDING',
-    };
+    });
   }
 
-  async findCheckoutById(id: string): Promise<AbacatePayCheckout | null> {
+  findCheckoutById(id: string): Promise<AbacatePayCheckout | null> {
     const status = this.statuses.get(id);
-    if (!status) return null;
-    return {
+    if (!status) return Promise.resolve(null);
+    return Promise.resolve({
       id,
       url: `https://fake.abacatepay.test/checkouts/${id}`,
       status,
-    };
+    });
   }
 
   setStatus(id: string, status: AbacatePayCheckout['status']): void {
@@ -314,9 +314,7 @@ describe('Wallets ownership (e2e, infra real)', () => {
       const stillPending = await request(app.getHttpServer())
         .get(`/api/v1/wallets/me/deposits/${deposit.id}`)
         .set('Authorization', `Bearer ${token}`);
-      expect((stillPending.body as { status: string }).status).toBe(
-        'PENDING',
-      );
+      expect((stillPending.body as { status: string }).status).toBe('PENDING');
 
       fakeAbacatePayService.setStatus(
         checkoutIdFromUrl(deposit.checkoutUrl),
