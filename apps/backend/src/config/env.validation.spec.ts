@@ -7,6 +7,7 @@ describe('envValidationSchema', () => {
     RABBITMQ_URL: 'amqp://wallet:wallet@localhost:5672',
     JWT_ACCESS_SECRET: 'a'.repeat(16),
     JWT_REFRESH_SECRET: 'b'.repeat(16),
+    ABACATEPAY_API_KEY: 'test-key',
   };
 
   interface ValidatedEnv {
@@ -34,6 +35,7 @@ describe('envValidationSchema', () => {
     'RABBITMQ_URL',
     'JWT_ACCESS_SECRET',
     'JWT_REFRESH_SECRET',
+    'ABACATEPAY_API_KEY',
   ] as const)('rejects a missing required variable: %s', (key) => {
     const incompleteEnv = { ...validEnv };
     delete incompleteEnv[key];
