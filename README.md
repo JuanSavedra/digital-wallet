@@ -38,40 +38,40 @@ Este projeto foi construído para responder às perguntas que eu tinha sobre con
 ### Fluxo de uma transferência ponta a ponta
 
 ```
-Cliente          API              Redis            Postgres           RabbitMQ          Consumidor
-  |  POST /transfer  |                |                  |                 |                 |
-  |  Idempotency-Key |                |                  |                 |                 |
-  |----------------->|                |                  |                 |                 |
-  |                  | lock(walletA, walletB) ordem determinística         |                 |
-  |                  |--------------->|                  |                 |                 |
-  |                  |<---- OK -------|                  |                 |                 |
-  |                  |                                    |                 |                 |
-  |                  | BEGIN TX (Postgres)                |                 |                 |
-  |                  |------------------------------------>|                 |                 |
-  |                  |   valida saldo, valida version (lock otimista)       |                 |
-  |                  |   debita origem, credita destino    |                 |                 |
-  |                  |   grava transaction_entries (ledger)|                 |                 |
-  |                  |   grava transactions (status=COMPLETED, idem_key)    |                 |
-  |                  |   grava outbox_events (status=PENDING)  <- mesma TX  |                 |
-  |                  | COMMIT                              |                 |                 |
-  |                  |------------------------------------>|                 |                 |
-  |                  | release lock   |                  |                 |                 |
-  |<-- 201 Created --|                |                  |                 |                 |
-  |  (síncrono, não espera a fila)    |                  |                 |                 |
-  |                  |                |                  |                 |                 |
-  |                  |     [OutboxRelayService, a cada 2s, em paralelo]     |                 |
-  |                  |     lê outbox_events PENDING        |                 |                 |
-  |                  |------------------------------------>|                 |                 |
-  |                  |     publica "transaction.completed" (confirm channel)|                 |
-  |                  |------------------------------------------------------>|                 |
-  |                  |     marca outbox_events PUBLISHED   |                 |                 |
-  |                  |------------------------------------>|                 |                 |
-  |                  |                |                  |                 |  consome, dedupe |
-  |                  |                |                  |                 |  via Redis       |
-  |                  |                |                  |                 |----------------->|
-  |                  |                |                  |                 |    invalida cache|
-  |                  |                |                  |                 |    saldo/extrato |
-  |                  |                |                  |                 |<--- ack/nack ----|
+Cliente             API             Redis               Postgres            RabbitMQ             Consumidor
+  |  POST /transfer  |                |                    |                   |                     |
+  |  Idempotency-Key |                |                    |                   |                     |
+  |----------------->|                |                    |                   |                     |
+  |                  | lock(walletA, walletB) ordem determinística             |                     |
+  |                  |--------------->|                    |                   |                     |
+  |                  |<---- OK -------|                    |                   |                     |
+  |                  |                                     |                   |                     |
+  |                  | BEGIN TX (Postgres)                 |                   |                     |
+  |                  |------------------------------------>|                   |                     |
+  |                  |   valida saldo, valida version (lock otimista)          |                     |
+  |                  |   debita origem, credita destino    |                   |                     |
+  |                  |   grava transaction_entries (ledger)|                   |                     |
+  |                  |   grava transactions (status=COMPLETED, idem_key)       |                     | 
+  |                  |   grava outbox_events (status=PENDING)  <- mesma TX     |                     |
+  |                  | COMMIT                              |                   |                     |
+  |                  |------------------------------------>|                   |                     |
+  |                  | release lock   |                    |                   |                     |
+  |<-- 201 Created --|                |                    |                   |                     |
+  |  (síncrono, não espera a fila)    |                    |                   |                     |
+  |                  |                |                    |                   |                     |
+  |                  | [OutboxRelayService, a cada 2s, em paralelo]            |                     |
+  |                  | lê outbox_events PENDING            |                   |                     |
+  |                  |------------------------------------>|                   |                     |
+  |                  |     publica "transaction.completed" (confirm channel)   |                     |
+  |                  |-------------------------------------------------------->|                     |
+  |                  |     marca outbox_events PUBLISHED   |                   |                     |
+  |                  |------------------------------------>|                   |                     |
+  |                  |                |                    |                   |  consome, dedupe    |
+  |                  |                |                    |                   |  via Redis          |
+  |                  |                |                    |                   |-------------------->|
+  |                  |                |                    |                   |    invalida cache   |
+  |                  |                |                    |                   |    saldo/extrato    |
+  |                  |                |                    |                   |<--- ack/nack -------|
 ```
 
 Pontos-chave:
