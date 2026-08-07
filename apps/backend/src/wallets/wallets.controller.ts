@@ -14,7 +14,9 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { RequestUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { DepositDto } from './dto/deposit.dto';
+import { DepositsService } from './deposits.service';
+import { CreateDepositDto } from './dto/create-deposit.dto';
+import { toDepositResponse } from './dto/deposit-response';
 import { LookupQueryDto } from './dto/lookup-query.dto';
 import { StatementQueryDto } from './dto/statement-query.dto';
 import { toWalletResponse } from './dto/wallet-response';
@@ -26,7 +28,10 @@ import { WalletsService } from './wallets.service';
 @UseGuards(JwtAuthGuard)
 @Controller('wallets')
 export class WalletsController {
-  constructor(private readonly walletsService: WalletsService) {}
+  constructor(
+    private readonly walletsService: WalletsService,
+    private readonly depositsService: DepositsService,
+  ) {}
 
   @Get('me')
   async me(@CurrentUser() user: RequestUser) {
@@ -54,23 +59,29 @@ export class WalletsController {
     return { page: query.page, entries };
   }
 
-  /**
-   * Não é uma feature de produto (não existe rail de captação externa
-   * neste projeto — PIX, cartão etc. estão fora do escopo). Existe só
-   * para dar saldo inicial e permitir testar transferências manualmente.
-   */
-  @HttpCode(HttpStatus.OK)
-  @Post('me/deposit')
-  async deposit(@CurrentUser() user: RequestUser, @Body() dto: DepositDto) {
-    const wallet = await this.walletsService.findByUserId(user.userId);
-    if (!wallet) {
-      throw new NotFoundException('Carteira não encontrada');
-    }
-    const updated = await this.walletsService.deposit(
-      wallet.id,
-      BigInt(dto.amount),
+  @Post('me/deposits')
+  @HttpCode(HttpStatus.CREATED)
+  async createDeposit(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: CreateDepositDto,
+  ) {
+    const deposit = await this.depositsService.createDeposit(
+      user.userId,
+      dto.amount,
     );
-    return toWalletResponse(updated);
+    return toDepositResponse(deposit);
+  }
+
+  @Get('me/deposits/:id')
+  async getDeposit(
+    @CurrentUser() user: RequestUser,
+    @Param('id') id: string,
+  ) {
+    const deposit = await this.depositsService.getDepositForUser(
+      id,
+      user.userId,
+    );
+    return toDepositResponse(deposit);
   }
 
   @Get('lookup')

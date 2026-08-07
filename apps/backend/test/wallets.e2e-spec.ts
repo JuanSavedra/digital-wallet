@@ -7,19 +7,66 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import type { AuthTokens } from '../src/auth/interfaces/token-payload.interface';
+import {
+  AbacatePayCheckout,
+  AbacatePayService,
+} from '../src/payments/abacatepay.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { configureApp } from '../src/setup-app';
+import { poll } from './utils/poll';
 
 /**
  * Requer Postgres e Redis reais (`make up`). Cobre o auto-provisionamento
  * de carteira no registro e o guard de propriedade (WalletOwnerGuard),
  * fechando o item pendente do Escopo 3.
  */
+/**
+ * Dublê de AbacatePayService: nunca bate na API real. `createPixCheckout`
+ * inicia como PENDING; os testes usam `setStatus` para simular o que a
+ * AbacatePay reportaria depois do usuário "pagar" no checkout hospedado.
+ */
+class FakeAbacatePayService {
+  private readonly statuses = new Map<string, AbacatePayCheckout['status']>();
+
+  async createProduct(): Promise<{ id: string }> {
+    return { id: `prod_${randomUUID()}` };
+  }
+
+  async createPixCheckout(): Promise<AbacatePayCheckout> {
+    const id = `checkout_${randomUUID()}`;
+    this.statuses.set(id, 'PENDING');
+    return {
+      id,
+      url: `https://fake.abacatepay.test/checkouts/${id}`,
+      status: 'PENDING',
+    };
+  }
+
+  async findCheckoutById(id: string): Promise<AbacatePayCheckout | null> {
+    const status = this.statuses.get(id);
+    if (!status) return null;
+    return {
+      id,
+      url: `https://fake.abacatepay.test/checkouts/${id}`,
+      status,
+    };
+  }
+
+  setStatus(id: string, status: AbacatePayCheckout['status']): void {
+    this.statuses.set(id, status);
+  }
+}
+
+function checkoutIdFromUrl(checkoutUrl: string): string {
+  return checkoutUrl.split('/').pop()!;
+}
+
 describe('Wallets ownership (e2e, infra real)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let jwtService: JwtService;
   let configService: ConfigService;
+  const fakeAbacatePayService = new FakeAbacatePayService();
 
   const userAEmail = `wallets-a-${randomUUID()}@example.com`;
   const userBEmail = `wallets-b-${randomUUID()}@example.com`;
@@ -29,7 +76,10 @@ describe('Wallets ownership (e2e, infra real)', () => {
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(AbacatePayService)
+      .useValue(fakeAbacatePayService)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     configureApp(app);
@@ -41,14 +91,29 @@ describe('Wallets ownership (e2e, infra real)', () => {
   });
 
   afterAll(async () => {
-    const users = await prisma.user.findMany({
-      where: { email: { in: allEmails } },
-      select: { id: true },
-    });
-    const userIds = users.map((u) => u.id);
-    await prisma.wallet.deleteMany({ where: { userId: { in: userIds } } });
-    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
-    await app.close();
+    // Precisa apagar em ordem (deposits -> wallets -> users) por causa das
+    // FKs — e sempre fechar o app no finally: se a limpeza falhar antes de
+    // `app.close()`, as conexões do Redis/RabbitMQ ficam abertas e o Jest
+    // trava esperando por elas indefinidamente em vez de só reportar o erro.
+    try {
+      const users = await prisma.user.findMany({
+        where: { email: { in: allEmails } },
+        select: { id: true },
+      });
+      const userIds = users.map((u) => u.id);
+      const wallets = await prisma.wallet.findMany({
+        where: { userId: { in: userIds } },
+        select: { id: true },
+      });
+      const walletIds = wallets.map((w) => w.id);
+      await prisma.walletDeposit.deleteMany({
+        where: { walletId: { in: walletIds } },
+      });
+      await prisma.wallet.deleteMany({ where: { userId: { in: userIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    } finally {
+      await app.close();
+    }
   });
 
   async function registerAndLogin(email: string) {
@@ -186,30 +251,27 @@ describe('Wallets ownership (e2e, infra real)', () => {
     });
   });
 
-  describe('POST /wallets/me/deposit', () => {
-    it('credits the caller wallet and the new balance is reflected right away (cache invalidated)', async () => {
+  describe('POST /wallets/me/deposits (AbacatePay, dublê em dev)', () => {
+    it('creates a PENDING deposit with a checkout url', async () => {
       const token = await registerAndSignToken(
         `wallets-j-${randomUUID()}@example.com`,
       );
 
-      const first = await request(app.getHttpServer())
-        .post('/api/v1/wallets/me/deposit')
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposits')
         .set('Authorization', `Bearer ${token}`)
         .send({ amount: 2_000 });
-      expect(first.status).toBe(200);
-      expect((first.body as { balance: string }).balance).toBe('2000');
 
-      const second = await request(app.getHttpServer())
-        .post('/api/v1/wallets/me/deposit')
-        .set('Authorization', `Bearer ${token}`)
-        .send({ amount: 500 });
-      expect(second.status).toBe(200);
-      expect((second.body as { balance: string }).balance).toBe('2500');
-
-      const meResponse = await request(app.getHttpServer())
-        .get('/api/v1/wallets/me')
-        .set('Authorization', `Bearer ${token}`);
-      expect((meResponse.body as { balance: string }).balance).toBe('2500');
+      expect(response.status).toBe(201);
+      const body = response.body as {
+        id: string;
+        amount: string;
+        status: string;
+        checkoutUrl: string;
+      };
+      expect(body.status).toBe('PENDING');
+      expect(body.amount).toBe('2000');
+      expect(body.checkoutUrl).toContain('fake.abacatepay.test');
     });
 
     it('rejects a non-positive amount', async () => {
@@ -218,7 +280,7 @@ describe('Wallets ownership (e2e, infra real)', () => {
       );
 
       const response = await request(app.getHttpServer())
-        .post('/api/v1/wallets/me/deposit')
+        .post('/api/v1/wallets/me/deposits')
         .set('Authorization', `Bearer ${token}`)
         .send({ amount: 0 });
 
@@ -231,11 +293,133 @@ describe('Wallets ownership (e2e, infra real)', () => {
       );
 
       const response = await request(app.getHttpServer())
-        .post('/api/v1/wallets/me/deposit')
+        .post('/api/v1/wallets/me/deposits')
         .set('Authorization', `Bearer ${token}`)
         .send({ amount: 10_000_01 });
 
       expect(response.status).toBe(400);
+    });
+
+    it('credits the wallet once the provider reports PAID, and the cache reflects it right away', async () => {
+      const token = await registerAndSignToken(
+        `wallets-m-${randomUUID()}@example.com`,
+      );
+
+      const created = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposits')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ amount: 3_000 });
+      const deposit = created.body as { id: string; checkoutUrl: string };
+
+      const stillPending = await request(app.getHttpServer())
+        .get(`/api/v1/wallets/me/deposits/${deposit.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect((stillPending.body as { status: string }).status).toBe(
+        'PENDING',
+      );
+
+      fakeAbacatePayService.setStatus(
+        checkoutIdFromUrl(deposit.checkoutUrl),
+        'PAID',
+      );
+
+      const confirmed = await poll(
+        () =>
+          request(app.getHttpServer())
+            .get(`/api/v1/wallets/me/deposits/${deposit.id}`)
+            .set('Authorization', `Bearer ${token}`),
+        (res) => (res.body as { status: string }).status === 'PAID',
+      );
+      expect((confirmed.body as { status: string }).status).toBe('PAID');
+
+      const meResponse = await request(app.getHttpServer())
+        .get('/api/v1/wallets/me')
+        .set('Authorization', `Bearer ${token}`);
+      expect((meResponse.body as { balance: string }).balance).toBe('3000');
+    });
+
+    it('never double-credits when the same PAID deposit is polled concurrently', async () => {
+      const token = await registerAndSignToken(
+        `wallets-n-${randomUUID()}@example.com`,
+      );
+
+      const created = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposits')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ amount: 1_500 });
+      const deposit = created.body as { id: string; checkoutUrl: string };
+
+      fakeAbacatePayService.setStatus(
+        checkoutIdFromUrl(deposit.checkoutUrl),
+        'PAID',
+      );
+
+      const pollDeposit = () =>
+        request(app.getHttpServer())
+          .get(`/api/v1/wallets/me/deposits/${deposit.id}`)
+          .set('Authorization', `Bearer ${token}`);
+
+      const results = await Promise.all([
+        pollDeposit(),
+        pollDeposit(),
+        pollDeposit(),
+      ]);
+      for (const result of results) {
+        expect((result.body as { status: string }).status).toBe('PAID');
+      }
+
+      const meResponse = await request(app.getHttpServer())
+        .get('/api/v1/wallets/me')
+        .set('Authorization', `Bearer ${token}`);
+      expect((meResponse.body as { balance: string }).balance).toBe('1500');
+    });
+
+    it('marks the deposit CANCELLED when the provider reports a terminal non-paid status, without crediting', async () => {
+      const token = await registerAndSignToken(
+        `wallets-o-${randomUUID()}@example.com`,
+      );
+
+      const created = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposits')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ amount: 900 });
+      const deposit = created.body as { id: string; checkoutUrl: string };
+
+      fakeAbacatePayService.setStatus(
+        checkoutIdFromUrl(deposit.checkoutUrl),
+        'CANCELLED',
+      );
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/v1/wallets/me/deposits/${deposit.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect((response.body as { status: string }).status).toBe('CANCELLED');
+
+      const meResponse = await request(app.getHttpServer())
+        .get('/api/v1/wallets/me')
+        .set('Authorization', `Bearer ${token}`);
+      expect((meResponse.body as { balance: string }).balance).toBe('0');
+    });
+
+    it('rejects fetching a deposit that belongs to another user with 403', async () => {
+      const ownerToken = await registerAndSignToken(
+        `wallets-p-${randomUUID()}@example.com`,
+      );
+      const intruderToken = await registerAndSignToken(
+        `wallets-q-${randomUUID()}@example.com`,
+      );
+
+      const created = await request(app.getHttpServer())
+        .post('/api/v1/wallets/me/deposits')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ amount: 700 });
+      const deposit = created.body as { id: string };
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/v1/wallets/me/deposits/${deposit.id}`)
+        .set('Authorization', `Bearer ${intruderToken}`);
+
+      expect(response.status).toBe(403);
     });
   });
 });

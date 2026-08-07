@@ -34,9 +34,13 @@ export function StatementPage() {
                     {centsToBRL(entry.amount)}
                   </span>
                   <span>{new Date(entry.createdAt).toLocaleString('pt-BR')}</span>
-                  <Link to={`/transactions/${entry.transactionId}`}>
-                    ver transação
-                  </Link>
+                  {entry.source === 'deposit' ? (
+                    <span>Depósito</span>
+                  ) : (
+                    <Link to={`/transactions/${entry.transactionId}`}>
+                      ver transação
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>

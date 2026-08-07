@@ -77,9 +77,12 @@ export class WalletsService {
   }
 
   /**
-   * Extrato paginado (mais recente primeiro). O ledger é imutável, então
-   * só a página 1 muda quando uma nova transação acontece — páginas mais
-   * antigas nunca precisam de invalidação, só do TTL de segurança.
+   * Extrato paginado (mais recente primeiro), mesclando o ledger de
+   * transferências com os depósitos pagos. Cada fonte busca `skip +
+   * pageSize` candidatos e a mescla é ordenada/paginada em memória — só a
+   * página 1 é ativamente invalidada quando algo novo acontece (ver
+   * `invalidateWalletCaches`), então essa aproximação é aceitável: páginas
+   * mais fundo na paginação praticamente não mudam depois de escritas.
    */
   async getStatement(
     walletId: string,
@@ -91,45 +94,53 @@ export class WalletsService {
       return JSON.parse(cached) as StatementEntry[];
     }
 
-    const entries = await this.prisma.ledgerEntry.findMany({
-      where: { walletId },
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * STATEMENT_PAGE_SIZE,
-      take: STATEMENT_PAGE_SIZE,
-    });
-    const serialized: StatementEntry[] = entries.map((entry) => ({
-      id: entry.id,
-      transactionId: entry.transactionId,
-      direction: entry.direction,
-      amount: entry.amount.toString(),
-      createdAt: entry.createdAt,
-    }));
+    const skip = (page - 1) * STATEMENT_PAGE_SIZE;
+    const candidateLimit = skip + STATEMENT_PAGE_SIZE;
+
+    const [ledgerEntries, deposits] = await Promise.all([
+      this.prisma.ledgerEntry.findMany({
+        where: { walletId },
+        orderBy: { createdAt: 'desc' },
+        take: candidateLimit,
+      }),
+      this.prisma.walletDeposit.findMany({
+        where: { walletId, status: 'PAID' },
+        orderBy: { createdAt: 'desc' },
+        take: candidateLimit,
+      }),
+    ]);
+
+    const merged: StatementEntry[] = [
+      ...ledgerEntries.map(
+        (entry): StatementEntry => ({
+          id: entry.id,
+          source: 'transfer',
+          transactionId: entry.transactionId,
+          direction: entry.direction,
+          amount: entry.amount.toString(),
+          createdAt: entry.createdAt,
+        }),
+      ),
+      ...deposits.map(
+        (deposit): StatementEntry => ({
+          id: deposit.id,
+          source: 'deposit',
+          transactionId: null,
+          direction: 'CREDIT',
+          amount: deposit.amount.toString(),
+          createdAt: deposit.paidAt ?? deposit.createdAt,
+        }),
+      ),
+    ]
+      .sort((a, b) => b.createdAt.valueOf() - a.createdAt.valueOf())
+      .slice(skip, skip + STATEMENT_PAGE_SIZE);
 
     await this.redisService.set(
       cacheKey,
-      JSON.stringify(serialized),
+      JSON.stringify(merged),
       STATEMENT_CACHE_TTL_SECONDS,
     );
-    return serialized;
-  }
-
-  /**
-   * Credita a carteira sem uma carteira de origem — não é uma
-   * "transferência" (não usa idempotência/lock/outbox/ledger daquele
-   * fluxo) porque não existe rail de captação externa real neste projeto
-   * (PIX, cartão, etc. estão fora do escopo). Existe só pra dar saldo
-   * inicial e permitir testar transferências de verdade. Um `UPDATE ...
-   * SET balance = balance + amount` é atômico por natureza no Postgres —
-   * não precisa do lock otimista usado nas transferências, que existe
-   * especificamente para o padrão "ler saldo, decidir, escrever de volta".
-   */
-  async deposit(walletId: string, amountCents: bigint): Promise<Wallet> {
-    const wallet = await this.prisma.wallet.update({
-      where: { id: walletId },
-      data: { balance: { increment: amountCents } },
-    });
-    await this.invalidateWalletCaches(walletId);
-    return wallet;
+    return merged;
   }
 
   async invalidateWalletCaches(walletId: string): Promise<void> {

@@ -17,10 +17,12 @@ export interface Wallet {
 }
 
 export type LedgerDirection = 'DEBIT' | 'CREDIT';
+export type StatementEntrySource = 'transfer' | 'deposit';
 
 export interface StatementEntry {
   id: string;
-  transactionId: string;
+  source: StatementEntrySource;
+  transactionId: string | null;
   direction: LedgerDirection;
   amount: string;
   createdAt: string;
@@ -29,6 +31,17 @@ export interface StatementEntry {
 export interface StatementResponse {
   page: number;
   entries: StatementEntry[];
+}
+
+export type DepositStatus = 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+
+export interface Deposit {
+  id: string;
+  amount: string;
+  status: DepositStatus;
+  checkoutUrl: string;
+  createdAt: string;
+  paidAt: string | null;
 }
 
 export type TransactionStatus = 'PENDING' | 'COMPLETED' | 'FAILED';

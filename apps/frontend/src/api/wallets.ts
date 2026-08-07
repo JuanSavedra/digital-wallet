@@ -19,13 +19,3 @@ export async function lookupWalletByEmail(email: string): Promise<string> {
   });
   return data.walletId;
 }
-
-/** Não existe rail de captação externa neste projeto (PIX, cartão etc.
- * estão fora do escopo) — isso só dá saldo inicial pra testar
- * transferências manualmente. */
-export async function depositToMyWallet(amountCents: number): Promise<Wallet> {
-  const { data } = await api.post<Wallet>('/wallets/me/deposit', {
-    amount: amountCents,
-  });
-  return data;
-}

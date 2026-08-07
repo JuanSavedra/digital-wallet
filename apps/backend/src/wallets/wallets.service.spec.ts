@@ -8,6 +8,7 @@ describe('WalletsService', () => {
   let prisma: {
     wallet: Record<string, jest.Mock>;
     ledgerEntry: Record<string, jest.Mock>;
+    walletDeposit: Record<string, jest.Mock>;
   };
   let redisService: jest.Mocked<RedisService>;
 
@@ -30,6 +31,7 @@ describe('WalletsService', () => {
         update: jest.fn(),
       },
       ledgerEntry: { findMany: jest.fn() },
+      walletDeposit: { findMany: jest.fn().mockResolvedValue([]) },
     };
     redisService = {
       get: jest.fn(),
@@ -133,6 +135,7 @@ describe('WalletsService', () => {
       const cachedEntries = [
         {
           id: 'entry-1',
+          source: 'transfer',
           transactionId: 'tx-1',
           direction: 'DEBIT',
           amount: '500',
@@ -170,23 +173,46 @@ describe('WalletsService', () => {
         expect.any(Number),
       );
     });
-  });
 
-  describe('deposit', () => {
-    it('increments the balance and invalidates the cache', async () => {
-      prisma.wallet.update.mockResolvedValue({ ...wallet, balance: 5_000n });
+    it('merges paid deposits alongside ledger entries, most recent first', async () => {
+      redisService.get.mockResolvedValue(null);
+      prisma.ledgerEntry.findMany.mockResolvedValue([
+        {
+          id: 'entry-1',
+          transactionId: 'tx-1',
+          direction: 'DEBIT',
+          amount: 500n,
+          createdAt: new Date('2026-01-01T10:00:00Z'),
+        },
+      ]);
+      prisma.walletDeposit.findMany.mockResolvedValue([
+        {
+          id: 'deposit-1',
+          amount: 2_000n,
+          createdAt: new Date('2026-01-01T09:00:00Z'),
+          paidAt: new Date('2026-01-01T11:00:00Z'),
+        },
+      ]);
 
-      const result = await walletsService.deposit('wallet-1', 5_000n);
+      const entries = await walletsService.getStatement('wallet-1', 1);
 
-      expect(prisma.wallet.update).toHaveBeenCalledWith({
-        where: { id: 'wallet-1' },
-        data: { balance: { increment: 5_000n } },
-      });
-      expect(redisService.del).toHaveBeenCalledWith('wallet:balance:wallet-1');
-      expect(redisService.del).toHaveBeenCalledWith(
-        'wallet:statement:wallet-1:page:1',
+      expect(prisma.walletDeposit.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { walletId: 'wallet-1', status: 'PAID' },
+        }),
       );
-      expect(result.balance).toBe(5_000n);
+      // O depósito foi pago DEPOIS do lançamento do ledger (paidAt mais
+      // recente), então aparece primeiro.
+      expect(entries).toEqual([
+        expect.objectContaining({
+          id: 'deposit-1',
+          source: 'deposit',
+          transactionId: null,
+          direction: 'CREDIT',
+          amount: '2000',
+        }),
+        expect.objectContaining({ id: 'entry-1', source: 'transfer' }),
+      ]);
     });
   });
 

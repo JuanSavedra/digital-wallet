@@ -1,29 +1,71 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { depositToMyWallet, getMyWallet } from '../api/wallets';
+import { createDeposit, getDeposit } from '../api/deposits';
+import { getMyWallet } from '../api/wallets';
 import { getErrorMessage } from '../lib/error-message';
 import { centsToBRL, parseReaisToCents } from '../lib/money';
+
+const POLL_INTERVAL_MS = 3000;
+const ACTIVE_DEPOSIT_STORAGE_KEY = 'wallet:activeDepositId';
 
 export function DashboardPage() {
   const queryClient = useQueryClient();
   const [depositInput, setDepositInput] = useState('');
   const [depositError, setDepositError] = useState<string | null>(null);
+  // Persistido em localStorage: sem isso, um F5 ou navegar pra outra tela
+  // enquanto o depósito ainda está PENDING perde essa referência e o
+  // polling nunca mais retoma sozinho para aquele depósito.
+  const [activeDepositId, setActiveDepositIdState] = useState<string | null>(
+    () => localStorage.getItem(ACTIVE_DEPOSIT_STORAGE_KEY),
+  );
+
+  function setActiveDepositId(id: string | null) {
+    setActiveDepositIdState(id);
+    if (id === null) {
+      localStorage.removeItem(ACTIVE_DEPOSIT_STORAGE_KEY);
+    } else {
+      localStorage.setItem(ACTIVE_DEPOSIT_STORAGE_KEY, id);
+    }
+  }
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['wallet'],
     queryFn: getMyWallet,
   });
 
-  const depositMutation = useMutation({
-    mutationFn: depositToMyWallet,
-    onSuccess: async () => {
+  const createDepositMutation = useMutation({
+    mutationFn: createDeposit,
+    onSuccess: (deposit) => {
       setDepositInput('');
-      await queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      setActiveDepositId(deposit.id);
+      window.open(deposit.checkoutUrl, '_blank', 'noopener,noreferrer');
     },
   });
 
-  function handleDeposit(event: FormEvent) {
+  const depositQuery = useQuery({
+    queryKey: ['deposit', activeDepositId],
+    queryFn: () => getDeposit(activeDepositId!),
+    enabled: activeDepositId !== null,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'PENDING' ? POLL_INTERVAL_MS : false,
+    // O checkout abre numa aba nova, então esta aba (Dashboard) fica em
+    // segundo plano boa parte do tempo em que o usuário está pagando — sem
+    // isso, o TanStack Query pausa o polling em background e a confirmação
+    // só chegaria quando o usuário voltasse manualmente pra esta aba.
+    refetchIntervalInBackground: true,
+  });
+
+  const deposit = depositQuery.data;
+
+  useEffect(() => {
+    if (deposit?.status === 'PAID') {
+      void queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      void queryClient.invalidateQueries({ queryKey: ['statement'] });
+    }
+  }, [deposit?.status, queryClient]);
+
+  function handleCreateDeposit(event: FormEvent) {
     event.preventDefault();
     setDepositError(null);
 
@@ -32,7 +74,11 @@ export function DashboardPage() {
       setDepositError('Informe um valor válido, maior que zero.');
       return;
     }
-    depositMutation.mutate(cents);
+    createDepositMutation.mutate(cents);
+  }
+
+  function handleReset() {
+    setActiveDepositId(null);
   }
 
   if (isLoading) return <p>Carregando saldo...</p>;
@@ -60,30 +106,66 @@ export function DashboardPage() {
       <div className="deposit-box">
         <h2>Adicionar saldo</h2>
         <p className="deposit-hint">
-          Não existe rail de captação externa neste projeto (PIX, cartão
-          etc.) — isso só serve pra você ter saldo e testar transferências.
+          O pagamento é processado via PIX pela AbacatePay em modo de
+          desenvolvimento — nenhuma cobrança real acontece. Use o QR Code ou
+          o "Pix Copia e Cola" de teste fornecidos pela AbacatePay na tela de
+          checkout.
         </p>
-        <form onSubmit={handleDeposit} className="auth-form">
-          <label>
-            Valor (R$)
-            <input
-              type="text"
-              inputMode="decimal"
-              required
-              value={depositInput}
-              onChange={(e) => setDepositInput(e.target.value)}
-              placeholder="100,00"
-            />
-          </label>
-          {(depositError ?? depositMutation.isError) && (
-            <p className="form-error">
-              {depositError ?? getErrorMessage(depositMutation.error)}
-            </p>
-          )}
-          <button type="submit" disabled={depositMutation.isPending}>
-            {depositMutation.isPending ? 'Adicionando...' : 'Adicionar saldo'}
-          </button>
-        </form>
+
+        {activeDepositId === null && (
+          <form onSubmit={handleCreateDeposit} className="auth-form">
+            <label>
+              Valor (R$)
+              <input
+                type="text"
+                inputMode="decimal"
+                required
+                value={depositInput}
+                onChange={(e) => setDepositInput(e.target.value)}
+                placeholder="100,00"
+              />
+            </label>
+            {(depositError ?? createDepositMutation.isError) && (
+              <p className="form-error">
+                {depositError ?? getErrorMessage(createDepositMutation.error)}
+              </p>
+            )}
+            <button type="submit" disabled={createDepositMutation.isPending}>
+              {createDepositMutation.isPending
+                ? 'Gerando pagamento...'
+                : 'Ir para pagamento'}
+            </button>
+          </form>
+        )}
+
+        {activeDepositId !== null && deposit && (
+          <div className="deposit-status">
+            {deposit.status === 'PENDING' && (
+              <p>
+                Aguardando confirmação do pagamento na aba de checkout que
+                abrimos para você...{' '}
+                <a href={deposit.checkoutUrl} target="_blank" rel="noreferrer">
+                  reabrir checkout
+                </a>
+              </p>
+            )}
+            {deposit.status === 'PAID' && (
+              <p className="deposit-success">
+                Pagamento confirmado! Seu saldo já foi atualizado.
+              </p>
+            )}
+            {(deposit.status === 'EXPIRED' || deposit.status === 'CANCELLED') && (
+              <p className="form-error">
+                O pagamento não foi concluído (
+                {deposit.status === 'EXPIRED' ? 'expirado' : 'cancelado'}
+                ). Tente novamente.
+              </p>
+            )}
+            <button type="button" onClick={handleReset}>
+              {deposit.status === 'PENDING' ? 'Cancelar' : 'Fazer novo depósito'}
+            </button>
+          </div>
+        )}
       </div>
     </section>
   );

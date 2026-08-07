@@ -3,6 +3,7 @@ import './App.css'
 import { Layout } from './components/Layout'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { DashboardPage } from './pages/DashboardPage'
+import { DepositCallbackPage } from './pages/DepositCallbackPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { StatementPage } from './pages/StatementPage'
@@ -14,6 +15,7 @@ function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/deposits/callback" element={<DepositCallbackPage />} />
 
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>

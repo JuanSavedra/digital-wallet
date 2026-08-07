@@ -33,6 +33,7 @@ model Wallet {
   outgoingTransactions Transaction[] @relation("OriginWallet")
   incomingTransactions Transaction[] @relation("DestinationWallet")
   ledgerEntries        LedgerEntry[]
+  deposits             WalletDeposit[]
 
   @@map("wallets")
 }
@@ -109,4 +110,34 @@ model OutboxEvent {
   @@index([status])
   @@index([aggregateId])
   @@map("outbox_events")
+}
+
+enum DepositStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+// Depósito via gateway de pagamento externo (AbacatePay, sempre em dev
+// mode — ver TODO.md). `providerChargeId` é único de propósito: mesmo
+// truque de idempotência das transferências (tentar inserir e tratar a
+// violação de constraint como sinal de corrida), pra nunca creditar duas
+// vezes a mesma cobrança paga.
+model WalletDeposit {
+  id                String        @id @default(uuid())
+  walletId          String        @map("wallet_id")
+  amount            BigInt // centavos
+  provider          String        @default("abacatepay")
+  providerChargeId  String        @unique @map("provider_charge_id")
+  providerProductId String?       @map("provider_product_id")
+  checkoutUrl       String        @map("checkout_url")
+  status            DepositStatus @default(PENDING)
+  createdAt         DateTime      @default(now()) @map("created_at")
+  paidAt            DateTime?     @map("paid_at")
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  @@index([walletId])
+  @@map("wallet_deposits")
 }
