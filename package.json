@@ -1,0 +1,11 @@
+{
+  "name": "digital-wallet",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "concurrently -n frontend,backend -c blue,green \"npm run dev --prefix apps/frontend\" \"npm run start:dev --prefix apps/backend\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
