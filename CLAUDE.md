@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a digital wallet project (internal transfers/payments) being built incrementally, scope by scope — see `TODO.md` (gitignored, local planning doc) for the full checklist and the suggested implementation order. Do not jump ahead to unimplemented scopes without confirming with the user first.
 
 Monorepo layout:
-- `apps/frontend` — React + TypeScript (Vite). Currently still the stock Vite template (`App.tsx` has default markup) — no wallet UI yet.
+- `apps/frontend` — React + TypeScript (Vite), routed with `react-router-dom`, server state via `@tanstack/react-query`. Pages: Login, Register, Dashboard, Statement, Transfer, TransactionDetail, all behind `ProtectedRoute`. `src/lib/token-store.ts` holds auth tokens outside React (localStorage + pub/sub via `useSyncExternalStore`) so both `AuthContext` and the axios interceptors in `src/lib/api-client.ts` share the same source of truth; the response interceptor retries once on 401 via `/auth/refresh`, deduplicating concurrent refresh attempts with a shared promise. Backend has `app.enableCors()` (see `setup-app.ts`) specifically so this frontend (port 5173 dev / 8080 Docker) can call the API (port 3000) cross-origin.
+- `GET /wallets/lookup?email=` (backend, `WalletsController`/`WalletsService.findByUserEmail`): resolves a wallet id from a user's email, so the Transfer page can send by email instead of requiring the raw wallet UUID — added after Scope 11 shipped, when manual testing showed there was no way to find another account's wallet id. Returns only `{ walletId }`, nothing else about the target user.
 - `apps/backend` — NestJS + TypeScript. `AuthModule`, `UsersModule`, `WalletsModule`, `TransactionsModule`, `OutboxModule`, and `MessagingModule` have real logic; `LedgerModule` is still an empty *Nest module* skeleton (the `LedgerEntry` table is written to directly by `TransactionsService`, no dedicated service yet). `PrismaModule` and `CacheModule` (Redis via `RedisService`) are `@Global()` — available everywhere without importing them explicitly.
 - Outbox pattern: `TransactionsService` inserts the `OutboxEvent` row inside the same `prisma.$transaction` as the debit/credit/ledger writes — if the transfer rolls back, the event never existed. `OutboxRelayService` (`src/outbox/`, `@Interval` every 2s) is the only thing that actually publishes to RabbitMQ, via `RabbitMqService` (`src/messaging/`), which uses an amqplib **confirm channel** (`waitForConfirms()`) — the event is only marked `PUBLISHED` after the broker actually acks it. A failure publishing one event doesn't block the rest of the batch or crash the relay; the event just stays `PENDING` for the next tick. `OutboxCleanupService` deletes `PUBLISHED` events older than 7 days via a daily `@Cron`.
 - RabbitMQ consumer side (`src/messaging/`): `TransactionEventsConsumer` consumes `transactions.process` (bound to `wallet.events`/`transaction.completed`) using a plain amqplib channel, not `@nestjs/microservices` — this was a deliberate choice to share the connection with the publisher and control retry headers directly. Retry is TTL-based: failed messages go to `transactions.process.retry` (a "parking lot" queue whose `x-dead-letter-exchange` points back at `wallet.events`) with an exponential-backoff `expiration` and an `x-retry-count` header **we set ourselves** (not RabbitMQ's automatic `x-death`). After `MAX_RETRY_ATTEMPTS` (3, i.e. 4 total attempts) it's moved to `transactions.process.dlq`. Consumer-side idempotency uses `RedisService.setIfNotExists` keyed by the event id (`processed:event:<id>`, 1h TTL) — the actual business action lives in `TransactionEventsHandler` (currently just logs; Scope 9's cache invalidation will extend it, without touching the retry/dedup machinery). `GET/POST /admin/dlq(/replay)` (behind `JwtAuthGuard` only — no admin-role concept exists) expose monitoring and manual reprocessing.
@@ -29,10 +30,12 @@ Root (infrastructure):
 - Copy `.env.example` to `.env` before running the stack
 
 Frontend (`apps/frontend`):
-- `npm run dev` — start the Vite dev server with HMR
+- `npm run dev` — start the Vite dev server with HMR (http://localhost:5173, calls the API at `http://localhost:3000/api/v1` by default — override with `VITE_API_URL`)
 - `npm run build` — type-check via `tsc -b` then build for production with Vite
 - `npm run lint` — run ESLint over the project
 - `npm run preview` — preview the production build locally
+- `npm run test` — Vitest (jsdom + Testing Library), config in `vitest.config.ts` (merges `vite.config.ts`); `npm run test:watch` for watch mode
+- The idempotency-key retry logic in `TransferPage` (reuse the key on network errors, mint a new one after a definitive server error) is easy to get backwards — see the component test file for the exact expected behavior before changing it
 
 Backend (`apps/backend`):
 - `npm run start:dev` — start Nest in watch mode
@@ -46,8 +49,6 @@ Backend (`apps/backend`):
 - `configureApp()` in `src/setup-app.ts` holds the prefix/versioning/pipes/filters/interceptors setup shared between `main.ts` and the e2e tests — extend it there, not separately in both places
 - Auth: access tokens are stateless JWTs (`JWT_ACCESS_SECRET`); refresh tokens are JWTs whose `jti` is tracked in Redis (`auth:refresh:<jti>` → userId, TTL = token validity) as a single-use allowlist — refreshing deletes the old key and issues a new pair (rotation), logout just deletes the key. There is no separate blacklist table/structure.
 - `prisma` is a regular `dependency` (not devDependency) on purpose — the production image runs `prisma migrate deploy` on container start (see `Dockerfile` CMD), which needs the CLI at runtime.
-
-Frontend has no test runner configured yet. If tests are added, record the run/single-test commands here.
 
 ## Tooling notes
 
