@@ -32,7 +32,11 @@ describe('Auth flow (e2e, infra real)', () => {
   });
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (user) {
+      await prisma.wallet.deleteMany({ where: { userId: user.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+    }
     await app.close();
   });
 

@@ -9,6 +9,7 @@ import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'node:crypto';
 import ms from 'ms';
 import { UsersService } from '../users/users.service';
+import { WalletsService } from '../wallets/wallets.service';
 import { RedisService } from '../cache/redis.service';
 import {
   AccessTokenPayload,
@@ -23,6 +24,7 @@ const REFRESH_TOKEN_REDIS_PREFIX = 'auth:refresh:';
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
+    private readonly walletsService: WalletsService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
@@ -36,6 +38,7 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(password, PASSWORD_SALT_ROUNDS);
     const user = await this.usersService.create(email, passwordHash);
+    await this.walletsService.createForUser(user.id);
 
     return { id: user.id, email: user.email };
   }

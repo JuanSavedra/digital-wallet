@@ -5,12 +5,14 @@ import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 import { RedisService } from '../cache/redis.service';
 import { UsersService } from '../users/users.service';
+import { WalletsService } from '../wallets/wallets.service';
 
 jest.mock('bcrypt');
 
 describe('AuthService', () => {
   let authService: AuthService;
   let usersService: jest.Mocked<UsersService>;
+  let walletsService: jest.Mocked<WalletsService>;
   let jwtService: jest.Mocked<JwtService>;
   let redisService: jest.Mocked<RedisService>;
 
@@ -35,6 +37,10 @@ describe('AuthService', () => {
       findById: jest.fn(),
       create: jest.fn(),
     } as unknown as jest.Mocked<UsersService>;
+
+    walletsService = {
+      createForUser: jest.fn(),
+    } as unknown as jest.Mocked<WalletsService>;
 
     jwtService = {
       signAsync: jest.fn(),
@@ -61,6 +67,7 @@ describe('AuthService', () => {
 
     authService = new AuthService(
       usersService,
+      walletsService,
       jwtService,
       configService,
       redisService,
@@ -70,7 +77,7 @@ describe('AuthService', () => {
   afterEach(() => jest.clearAllMocks());
 
   describe('register', () => {
-    it('hashes the password and creates the user', async () => {
+    it('hashes the password, creates the user and provisions a wallet', async () => {
       usersService.findByEmail.mockResolvedValue(null);
       (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
       usersService.create.mockResolvedValue(user);
@@ -85,6 +92,7 @@ describe('AuthService', () => {
         'user@example.com',
         'hashed-password',
       );
+      expect(walletsService.createForUser).toHaveBeenCalledWith(user.id);
       expect(result).toEqual({ id: user.id, email: user.email });
     });
 
@@ -95,6 +103,7 @@ describe('AuthService', () => {
         authService.register('user@example.com', 'plain-password'),
       ).rejects.toThrow(ConflictException);
       expect(usersService.create).not.toHaveBeenCalled();
+      expect(walletsService.createForUser).not.toHaveBeenCalled();
     });
   });
 
