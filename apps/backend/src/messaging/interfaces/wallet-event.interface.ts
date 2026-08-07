@@ -3,6 +3,7 @@ export interface WalletEventMessage {
   aggregateId: string;
   eventType: string;
   payload: unknown;
+  correlationId?: string;
 }
 
 export interface TransactionCompletedPayload {

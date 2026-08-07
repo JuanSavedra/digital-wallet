@@ -34,6 +34,7 @@ export class OutboxRelayService {
             aggregateId: event.aggregateId,
             eventType: event.eventType,
             payload: event.payload,
+            correlationId: event.correlationId ?? undefined,
           },
         );
 

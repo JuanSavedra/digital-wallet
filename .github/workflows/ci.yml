@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  backend:
+    name: Backend (lint, unit tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test -- --ci
+      - run: npm run build
+
+  backend-e2e:
+    name: Backend (e2e, real Postgres/Redis/RabbitMQ)
+    runs-on: ubuntu-latest
+    # Secret do ABACATEPAY_API_KEY foi cadastrado no Environment "Development"
+    # (Settings > Environments), não como secret de repositório — sem essa
+    # linha o job não enxerga secrets de Environment nenhum.
+    environment: Development
+    defaults:
+      run:
+        working-directory: apps/backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wallet
+          POSTGRES_PASSWORD: wallet
+          POSTGRES_DB: wallet
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U wallet -d wallet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: wallet
+          RABBITMQ_DEFAULT_PASS: wallet
+        ports: ['5672:5672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://wallet:wallet@localhost:5432/wallet?schema=public
+      REDIS_URL: redis://localhost:6379
+      RABBITMQ_URL: amqp://wallet:wallet@localhost:5672
+      JWT_ACCESS_SECRET: ci-only-access-secret-not-used-in-prod
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-not-used-in-prod
+      # Depósitos via AbacatePay (PIX, dev mode) chamam a API real deles —
+      # precisa de uma chave de DESENVOLVIMENTO cadastrada como secret do
+      # Environment "Development" (ver `environment:` acima). Sem ela, só
+      # os testes de AbacatePay falham; o resto do e2e continua rodando.
+      ABACATEPAY_API_KEY: ${{ secrets.ABACATEPAY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npm run test:e2e
+
+  frontend:
+    name: Frontend (lint, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build

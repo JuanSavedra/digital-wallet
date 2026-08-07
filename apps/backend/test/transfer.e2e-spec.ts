@@ -211,4 +211,122 @@ describe('Transfers (e2e, infra real)', () => {
     expect(originWallet?.balance).toBe(4_000n);
     expect(destinationWallet?.balance).toBe(6_000n);
   });
+
+  it('survives a higher-fan-out burst of concurrent transfers from the same wallet without corrupting the balance', async () => {
+    // Saldo cobre exatamente metade das 20 transferências concorrentes de
+    // 500 cada — simula carga real (Escopo 12) e não só duas requisições.
+    const origin = await createFundedUser(5_000n);
+    const destination = await createFundedUser(0n);
+    const attempts = 20;
+    const amountPerTransfer = 500;
+
+    const responses = await Promise.all(
+      Array.from({ length: attempts }, () =>
+        request(app.getHttpServer())
+          .post('/api/v1/transactions/transfer')
+          .set('Authorization', `Bearer ${origin.accessToken}`)
+          .set('Idempotency-Key', randomUUID())
+          .send({
+            destinationWalletId: destination.walletId,
+            amount: amountPerTransfer,
+          }),
+      ),
+    );
+
+    const successCount = responses.filter((r) => r.status === 201).length;
+    const failureCount = responses.filter(
+      (r) => r.status === 400 || r.status === 409,
+    ).length;
+    expect(successCount).toBe(10);
+    expect(failureCount).toBe(attempts - 10);
+
+    const originWallet = await prisma.wallet.findUnique({
+      where: { id: origin.walletId },
+    });
+    const destinationWallet = await prisma.wallet.findUnique({
+      where: { id: destination.walletId },
+    });
+    // Nada de dinheiro perdido nem duplicado: a soma dos dois saldos
+    // continua batendo com o total original, e o destino recebeu
+    // exatamente `successCount` transferências.
+    expect(
+      (originWallet?.balance ?? 0n) + (destinationWallet?.balance ?? 0n),
+    ).toBe(5_000n);
+    expect(destinationWallet?.balance).toBe(
+      BigInt(successCount * amountPerTransfer),
+    );
+  });
+
+  it('survives concurrent transfers from many wallets into the same destination', async () => {
+    const destination = await createFundedUser(0n);
+    const senderCount = 10;
+    const senders = await Promise.all(
+      Array.from({ length: senderCount }, () => createFundedUser(1_000n)),
+    );
+
+    const responses = await Promise.all(
+      senders.map((sender) =>
+        request(app.getHttpServer())
+          .post('/api/v1/transactions/transfer')
+          .set('Authorization', `Bearer ${sender.accessToken}`)
+          .set('Idempotency-Key', randomUUID())
+          .send({ destinationWalletId: destination.walletId, amount: 1_000 }),
+      ),
+    );
+
+    expect(responses.every((r) => r.status === 201)).toBe(true);
+
+    const destinationWallet = await prisma.wallet.findUnique({
+      where: { id: destination.walletId },
+    });
+    // Créditos concorrentes vindos de origens diferentes não podem se
+    // perder por corrida no lock otimista da carteira de destino.
+    expect(destinationWallet?.balance).toBe(BigInt(senderCount * 1_000));
+  });
+
+  it('propagates the HTTP correlation id all the way into the outbox event', async () => {
+    const origin = await createFundedUser(10_000n);
+    const destination = await createFundedUser(0n);
+    const correlationId = randomUUID();
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/transactions/transfer')
+      .set('Authorization', `Bearer ${origin.accessToken}`)
+      .set('Idempotency-Key', randomUUID())
+      .set('x-request-id', correlationId)
+      .send({ destinationWalletId: destination.walletId, amount: 1_000 });
+
+    expect(response.status).toBe(201);
+    expect(response.headers['x-request-id']).toBe(correlationId);
+
+    const transactionId = (response.body as { id: string }).id;
+    const outboxEvent = await prisma.outboxEvent.findFirst({
+      where: { aggregateId: transactionId },
+    });
+    expect(outboxEvent?.correlationId).toBe(correlationId);
+  });
+
+  it('exposes transfer metrics on GET /api/metrics after a completed transfer', async () => {
+    const origin = await createFundedUser(10_000n);
+    const destination = await createFundedUser(0n);
+
+    const transferResponse = await request(app.getHttpServer())
+      .post('/api/v1/transactions/transfer')
+      .set('Authorization', `Bearer ${origin.accessToken}`)
+      .set('Idempotency-Key', randomUUID())
+      .send({ destinationWalletId: destination.walletId, amount: 1_000 });
+    expect(transferResponse.status).toBe(201);
+
+    const metricsResponse = await request(app.getHttpServer()).get(
+      '/api/metrics',
+    );
+
+    expect(metricsResponse.status).toBe(200);
+    expect(metricsResponse.text).toContain(
+      'wallet_transfer_duration_seconds',
+    );
+    expect(metricsResponse.text).toMatch(
+      /wallet_transfer_duration_seconds_count \d+/,
+    );
+  });
 });

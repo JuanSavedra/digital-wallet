@@ -99,13 +99,14 @@ enum OutboxStatus {
 // de propósito — a outbox é genérica e pode vir a carregar eventos de
 // outros agregados além de Transaction no futuro.
 model OutboxEvent {
-  id          String       @id @default(uuid())
-  aggregateId String       @map("aggregate_id")
-  eventType   String       @map("event_type")
-  payload     Json
-  status      OutboxStatus @default(PENDING)
-  createdAt   DateTime     @default(now()) @map("created_at")
-  publishedAt DateTime?    @map("published_at")
+  id            String       @id @default(uuid())
+  aggregateId   String       @map("aggregate_id")
+  eventType     String       @map("event_type")
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  correlationId String?      @map("correlation_id")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  publishedAt   DateTime?    @map("published_at")
 
   @@index([status])
   @@index([aggregateId])

@@ -1,5 +1,6 @@
 import type { ConsumeMessage } from 'amqplib';
 import { RedisService } from '../cache/redis.service';
+import { RequestContext } from '../common/context/request-context';
 import {
   MAX_RETRY_ATTEMPTS,
   TRANSACTIONS_DLQ_QUEUE,
@@ -86,6 +87,38 @@ describe('TransactionEventsConsumer', () => {
     expect(handler.handle).toHaveBeenCalled();
     expect(channel.ack).toHaveBeenCalledWith(msg);
     expect(channel.sendToQueue).not.toHaveBeenCalled();
+  });
+
+  it('makes the event correlationId available via RequestContext while handling', async () => {
+    redisService.setIfNotExists.mockResolvedValue(true);
+    let seenDuringHandle: string | undefined;
+    handler.handle.mockImplementation(() => {
+      seenDuringHandle = RequestContext.getCorrelationId();
+      return Promise.resolve();
+    });
+    const msg = makeMessage({
+      id: 'evt-1',
+      aggregateId: 'tx-1',
+      correlationId: 'req-from-http',
+    });
+
+    await deliver(msg);
+
+    expect(seenDuringHandle).toBe('req-from-http');
+  });
+
+  it('generates a correlationId when the event does not carry one', async () => {
+    redisService.setIfNotExists.mockResolvedValue(true);
+    let seenDuringHandle: string | undefined;
+    handler.handle.mockImplementation(() => {
+      seenDuringHandle = RequestContext.getCorrelationId();
+      return Promise.resolve();
+    });
+    const msg = makeMessage({ id: 'evt-1', aggregateId: 'tx-1' });
+
+    await deliver(msg);
+
+    expect(seenDuringHandle).toEqual(expect.any(String));
   });
 
   it('skips a duplicate event without invoking the handler', async () => {

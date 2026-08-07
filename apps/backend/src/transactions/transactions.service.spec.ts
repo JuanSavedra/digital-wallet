@@ -9,6 +9,8 @@ import {
   LockAcquisitionError,
   RedisLockService,
 } from '../cache/redis-lock.service';
+import { RequestContext } from '../common/context/request-context';
+import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { TransactionsService } from './transactions.service';
@@ -24,6 +26,7 @@ describe('TransactionsService', () => {
   let service: TransactionsService;
   let walletsService: jest.Mocked<WalletsService>;
   let redisLockService: jest.Mocked<RedisLockService>;
+  let metricsService: jest.Mocked<MetricsService>;
   let prisma: {
     transaction: Record<string, jest.Mock>;
     $transaction: jest.Mock;
@@ -80,10 +83,16 @@ describe('TransactionsService', () => {
       ),
     } as unknown as jest.Mocked<RedisLockService>;
 
+    metricsService = {
+      startTransferTimer: jest.fn(() => jest.fn()),
+      recordTransferError: jest.fn(),
+    } as unknown as jest.Mocked<MetricsService>;
+
     service = new TransactionsService(
       prisma as unknown as PrismaService,
       walletsService,
       redisLockService,
+      metricsService,
     );
   });
 
@@ -143,6 +152,7 @@ describe('TransactionsService', () => {
           status: 'COMPLETED',
         },
         status: 'PENDING',
+        correlationId: undefined,
       },
     });
     // A ordenação determinística das chaves acontece dentro do
@@ -152,6 +162,33 @@ describe('TransactionsService', () => {
       ['lock:wallet:wallet-origin', 'lock:wallet:wallet-destination'],
       5_000,
       expect.any(Function),
+    );
+  });
+
+  it('stamps the outbox event with the correlationId from RequestContext', async () => {
+    walletsService.findByUserId.mockResolvedValue(origin as never);
+    walletsService.findById.mockResolvedValue(destination as never);
+    prisma.transaction.create.mockResolvedValue({
+      id: 'tx-1',
+      status: 'PENDING',
+    });
+    tx.wallet.findUniqueOrThrow
+      .mockResolvedValueOnce(origin)
+      .mockResolvedValueOnce(destination);
+    tx.wallet.updateMany.mockResolvedValue({ count: 1 });
+    tx.transaction.update.mockResolvedValue({
+      id: 'tx-1',
+      status: 'COMPLETED',
+    });
+
+    await RequestContext.run({ correlationId: 'req-xyz' }, () =>
+      service.transfer(origin.userId, dto, idempotencyKey),
+    );
+
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ correlationId: 'req-xyz' }) as unknown,
+      }),
     );
   });
 

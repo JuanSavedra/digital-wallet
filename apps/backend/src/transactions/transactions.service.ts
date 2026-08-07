@@ -10,6 +10,8 @@ import {
   LockAcquisitionError,
   RedisLockService,
 } from '../cache/redis-lock.service';
+import { RequestContext } from '../common/context/request-context';
+import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { TransferDto } from './dto/transfer.dto';
@@ -28,6 +30,7 @@ export class TransactionsService {
     private readonly prisma: PrismaService,
     private readonly walletsService: WalletsService,
     private readonly redisLockService: RedisLockService,
+    private readonly metricsService: MetricsService,
   ) {}
 
   async transfer(
@@ -35,8 +38,22 @@ export class TransactionsService {
     dto: TransferDto,
     idempotencyKey: string,
   ): Promise<Transaction> {
+    const stopTimer = this.metricsService.startTransferTimer();
+    try {
+      return await this.doTransfer(userId, dto, idempotencyKey);
+    } finally {
+      stopTimer();
+    }
+  }
+
+  private async doTransfer(
+    userId: string,
+    dto: TransferDto,
+    idempotencyKey: string,
+  ): Promise<Transaction> {
     const originWallet = await this.walletsService.findByUserId(userId);
     if (!originWallet) {
+      this.metricsService.recordTransferError('not_found');
       throw new NotFoundException('Carteira de origem não encontrada');
     }
 
@@ -44,10 +61,12 @@ export class TransactionsService {
       dto.destinationWalletId,
     );
     if (!destinationWallet) {
+      this.metricsService.recordTransferError('not_found');
       throw new NotFoundException('Carteira de destino não encontrada');
     }
 
     if (originWallet.id === destinationWallet.id) {
+      this.metricsService.recordTransferError('validation');
       throw new BadRequestException(
         'Não é possível transferir para a própria carteira',
       );
@@ -76,6 +95,7 @@ export class TransactionsService {
       );
     } catch (error) {
       if (error instanceof LockAcquisitionError) {
+        this.metricsService.recordTransferError('lock_conflict');
         throw new ConflictException(
           'Não foi possível processar a transferência agora, tente novamente',
         );
@@ -194,6 +214,7 @@ export class TransactionsService {
               status: completed.status,
             },
             status: 'PENDING',
+            correlationId: RequestContext.getCorrelationId(),
           },
         });
 
@@ -206,11 +227,14 @@ export class TransactionsService {
       });
 
       if (error instanceof InsufficientBalanceError) {
+        this.metricsService.recordTransferError('insufficient_balance');
         throw new BadRequestException(error.message);
       }
       if (error instanceof ConcurrentModificationError) {
+        this.metricsService.recordTransferError('concurrent_modification');
         throw new ConflictException(error.message);
       }
+      this.metricsService.recordTransferError('unexpected');
       throw error;
     }
   }

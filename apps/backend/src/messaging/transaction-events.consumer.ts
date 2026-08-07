@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Channel, ConsumeMessage } from 'amqplib';
+import { randomUUID } from 'node:crypto';
 import { RedisService } from '../cache/redis.service';
+import { RequestContext } from '../common/context/request-context';
 import {
   MAX_RETRY_ATTEMPTS,
   PROCESSED_EVENT_DEDUP_TTL_SECONDS,
@@ -83,8 +85,22 @@ export class TransactionEventsConsumer implements OnModuleInit {
   // RabbitMqService.onModuleDestroy já fecha todos os canais nela.
 
   private async onMessage(msg: ConsumeMessage): Promise<void> {
-    const channel = this.getChannel();
     const event = JSON.parse(msg.content.toString()) as WalletEventMessage;
+    // O evento carrega o correlationId que nasceu na requisição HTTP que
+    // originou a transferência (ver TransactionsService/OutboxRelayService);
+    // quando não tem (ex. mensagem antiga, mensagem sem correlationId),
+    // cria um novo só para amarrar os logs deste processamento entre si.
+    return RequestContext.run(
+      { correlationId: event.correlationId ?? randomUUID() },
+      () => this.processMessage(msg, event),
+    );
+  }
+
+  private async processMessage(
+    msg: ConsumeMessage,
+    event: WalletEventMessage,
+  ): Promise<void> {
+    const channel = this.getChannel();
     const retryCount = this.getRetryCount(msg);
     const dedupKey = `processed:event:${event.id}`;
 

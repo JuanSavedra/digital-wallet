@@ -14,6 +14,7 @@ describe('OutboxRelayService', () => {
     eventType: 'transaction.completed',
     payload: { transactionId: 'tx-1' },
     status: 'PENDING',
+    correlationId: 'req-abc',
   };
 
   beforeEach(() => {
@@ -39,7 +40,11 @@ describe('OutboxRelayService', () => {
     expect(rabbitMqService.publish).toHaveBeenCalledWith(
       WALLET_EVENTS_EXCHANGE,
       pendingEvent.eventType,
-      expect.objectContaining({ id: pendingEvent.id, aggregateId: 'tx-1' }),
+      expect.objectContaining({
+        id: pendingEvent.id,
+        aggregateId: 'tx-1',
+        correlationId: 'req-abc',
+      }),
     );
     expect(prisma.outboxEvent.update).toHaveBeenCalledWith({
       where: { id: pendingEvent.id },

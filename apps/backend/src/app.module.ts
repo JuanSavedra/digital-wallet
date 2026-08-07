@@ -11,6 +11,7 @@ import { TransactionsModule } from './transactions/transactions.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { OutboxModule } from './outbox/outbox.module';
 import { CacheModule } from './cache/cache.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { envValidationSchema } from './config/env.validation';
 
@@ -26,6 +27,7 @@ import { envValidationSchema } from './config/env.validation';
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
     PrismaModule,
     CacheModule,
+    MetricsModule,
     AuthModule,
     UsersModule,
     WalletsModule,

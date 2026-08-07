@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Wallet } from '@prisma/client';
 import { RedisService } from '../cache/redis.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StatementEntry } from './dto/statement-entry';
 
@@ -21,6 +22,7 @@ export class WalletsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redisService: RedisService,
+    private readonly metricsService: MetricsService,
   ) {}
 
   createForUser(userId: string): Promise<Wallet> {
@@ -62,8 +64,10 @@ export class WalletsService {
     const cacheKey = balanceCacheKey(walletId);
     const cached = await this.redisService.get(cacheKey);
     if (cached !== null) {
+      this.metricsService.recordCacheHit('wallet_balance');
       return BigInt(cached);
     }
+    this.metricsService.recordCacheMiss('wallet_balance');
 
     const wallet = await this.prisma.wallet.findUniqueOrThrow({
       where: { id: walletId },
@@ -91,8 +95,10 @@ export class WalletsService {
     const cacheKey = statementCacheKey(walletId, page);
     const cached = await this.redisService.get(cacheKey);
     if (cached !== null) {
+      this.metricsService.recordCacheHit('wallet_statement');
       return JSON.parse(cached) as StatementEntry[];
     }
+    this.metricsService.recordCacheMiss('wallet_statement');
 
     const skip = (page - 1) * STATEMENT_PAGE_SIZE;
     const candidateLimit = skip + STATEMENT_PAGE_SIZE;

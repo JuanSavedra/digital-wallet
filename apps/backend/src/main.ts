@@ -3,10 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { JsonLoggerService } from './common/logging/json-logger.service';
 import { configureApp } from './setup-app';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger: new JsonLoggerService(),
+  });
   const configService = app.get(ConfigService);
 
   configureApp(app);

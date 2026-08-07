@@ -1,5 +1,6 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { RedisService } from '../cache/redis.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletsService } from './wallets.service';
 
@@ -11,6 +12,7 @@ describe('WalletsService', () => {
     walletDeposit: Record<string, jest.Mock>;
   };
   let redisService: jest.Mocked<RedisService>;
+  let metricsService: jest.Mocked<MetricsService>;
 
   const wallet = {
     id: 'wallet-1',
@@ -38,9 +40,14 @@ describe('WalletsService', () => {
       set: jest.fn(),
       del: jest.fn(),
     } as unknown as jest.Mocked<RedisService>;
+    metricsService = {
+      recordCacheHit: jest.fn(),
+      recordCacheMiss: jest.fn(),
+    } as unknown as jest.Mocked<MetricsService>;
     walletsService = new WalletsService(
       prisma as unknown as PrismaService,
       redisService,
+      metricsService,
     );
   });
 
@@ -110,6 +117,10 @@ describe('WalletsService', () => {
 
       expect(balance).toBe(5000n);
       expect(prisma.wallet.findUniqueOrThrow).not.toHaveBeenCalled();
+      expect(metricsService.recordCacheHit).toHaveBeenCalledWith(
+        'wallet_balance',
+      );
+      expect(metricsService.recordCacheMiss).not.toHaveBeenCalled();
     });
 
     it('reads from the database and populates the cache on a miss', async () => {
@@ -126,6 +137,9 @@ describe('WalletsService', () => {
         'wallet:balance:wallet-1',
         '1234',
         expect.any(Number),
+      );
+      expect(metricsService.recordCacheMiss).toHaveBeenCalledWith(
+        'wallet_balance',
       );
     });
   });

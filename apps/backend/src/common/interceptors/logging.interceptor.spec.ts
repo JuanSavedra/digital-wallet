@@ -1,5 +1,6 @@
 import { CallHandler, ExecutionContext } from '@nestjs/common';
-import { of, throwError } from 'rxjs';
+import { from, of, throwError } from 'rxjs';
+import { RequestContext } from '../context/request-context';
 import { LoggingInterceptor, REQUEST_ID_HEADER } from './logging.interceptor';
 
 function createContext(headers: Record<string, string> = {}) {
@@ -49,6 +50,41 @@ describe('LoggingInterceptor', () => {
         REQUEST_ID_HEADER,
         'existing-id',
       );
+      done();
+    });
+  });
+
+  it('exposes the correlation id via RequestContext while the handler runs', (done) => {
+    const { context, request } = createContext({
+      [REQUEST_ID_HEADER]: 'existing-id',
+    });
+    const handler: CallHandler = {
+      handle: () => of(RequestContext.getCorrelationId()),
+    };
+
+    interceptor.intercept(context, handler).subscribe((correlationId) => {
+      expect(correlationId).toBe('existing-id');
+      expect(request.headers[REQUEST_ID_HEADER]).toBe('existing-id');
+      done();
+    });
+  });
+
+  it('keeps the correlation id available even when the controller reads it asynchronously', (done) => {
+    // Reproduz como o Nest de fato invoca controllers: `handle()` só cria
+    // o Observable, e o corpo do controller só roda quando esse Observable
+    // é de fato subscrito (aqui, dentro de um `.then()`, simulando um
+    // `await` real). Um wrapping que só envolvesse a *criação* do
+    // Observable (e não a subscrição) perderia o contexto nesse caso.
+    const { context } = createContext({ [REQUEST_ID_HEADER]: 'existing-id' });
+    const handler: CallHandler = {
+      handle: () =>
+        from(
+          Promise.resolve().then(() => RequestContext.getCorrelationId()),
+        ),
+    };
+
+    interceptor.intercept(context, handler).subscribe((correlationId) => {
+      expect(correlationId).toBe('existing-id');
       done();
     });
   });
