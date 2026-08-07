@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -293,6 +294,46 @@ describe('TransactionsService', () => {
       await expect(
         service.transfer(origin.userId, dto, idempotencyKey),
       ).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('findByIdForUser', () => {
+    const storedTransaction = {
+      id: 'tx-1',
+      originWallet: { userId: origin.userId },
+      destinationWallet: { userId: destination.userId },
+    };
+
+    it('returns the transaction when the requester is the origin owner', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(storedTransaction);
+
+      const result = await service.findByIdForUser('tx-1', origin.userId);
+
+      expect(result).toEqual(storedTransaction);
+    });
+
+    it('returns the transaction when the requester is the destination owner', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(storedTransaction);
+
+      const result = await service.findByIdForUser('tx-1', destination.userId);
+
+      expect(result).toEqual(storedTransaction);
+    });
+
+    it('throws NotFoundException when the transaction does not exist', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.findByIdForUser('missing', origin.userId),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws ForbiddenException when the requester is neither party', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(storedTransaction);
+
+      await expect(
+        service.findByIdForUser('tx-1', 'someone-else'),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

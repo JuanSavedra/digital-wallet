@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -81,6 +82,28 @@ export class TransactionsService {
       }
       throw error;
     }
+  }
+
+  async findByIdForUser(
+    transactionId: string,
+    userId: string,
+  ): Promise<Transaction> {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id: transactionId },
+      include: { originWallet: true, destinationWallet: true },
+    });
+    if (!transaction) {
+      throw new NotFoundException('Transação não encontrada');
+    }
+
+    const isParticipant =
+      transaction.originWallet.userId === userId ||
+      transaction.destinationWallet.userId === userId;
+    if (!isParticipant) {
+      throw new ForbiddenException('Você não tem acesso a esta transação');
+    }
+
+    return transaction;
   }
 
   private async executeTransfer(

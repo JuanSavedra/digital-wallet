@@ -2,9 +2,11 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -44,6 +46,15 @@ export class TransactionsController {
       user.userId,
       dto,
       idempotencyKey,
+    );
+    return toTransactionResponse(transaction);
+  }
+
+  @Get(':id')
+  async findOne(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+    const transaction = await this.transactionsService.findByIdForUser(
+      id,
+      user.userId,
     );
     return toTransactionResponse(transaction);
   }
