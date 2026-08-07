@@ -10,6 +10,7 @@ import { AppModule } from '../src/app.module';
 import { WALLET_EVENTS_EXCHANGE } from '../src/messaging/constants';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { configureApp } from '../src/setup-app';
+import { poll } from './utils/poll';
 
 /**
  * Requer Postgres, Redis e RabbitMQ reais (`make up`). Cobre o núcleo do
@@ -92,7 +93,7 @@ describe('Outbox relay (e2e, infra real)', () => {
     await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     await app.close();
-  });
+  }, 15_000);
 
   async function createFundedUser(initialBalanceCents: bigint) {
     const email = `outbox-${randomUUID()}@example.com`;
@@ -170,10 +171,15 @@ describe('Outbox relay (e2e, infra real)', () => {
     expect(deliveredPayload.payload.amount).toBe('1500');
     expect(deliveredPayload.payload.originWalletId).toBe(origin.walletId);
 
-    const outboxEventAfterRelay = await prisma.outboxEvent.findFirst({
-      where: { aggregateId: transactionId },
-    });
-    expect(outboxEventAfterRelay?.status).toBe('PUBLISHED');
+    // A confirmação de entrega (acima) e o UPDATE que marca PUBLISHED no
+    // banco são duas operações assíncronas separadas dentro do relay — a
+    // mensagem pode chegar na fila de teste um instante antes desse
+    // UPDATE terminar, então esperamos com um pequeno polling.
+    const outboxEventAfterRelay = await poll(
+      () =>
+        prisma.outboxEvent.findFirst({ where: { aggregateId: transactionId } }),
+      (event) => event?.status === 'PUBLISHED',
+    );
     expect(outboxEventAfterRelay?.publishedAt).not.toBeNull();
   }, 15_000);
 });

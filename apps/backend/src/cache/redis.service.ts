@@ -31,4 +31,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async del(key: string): Promise<void> {
     await this.client.del(key);
   }
+
+  /** SET NX com TTL: retorna true se a chave foi criada agora (primeira
+   * vez), false se já existia (duplicata). Base da idempotência do
+   * consumidor de eventos. */
+  async setIfNotExists(key: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.client.set(key, '1', 'EX', ttlSeconds, 'NX');
+    return result === 'OK';
+  }
 }
