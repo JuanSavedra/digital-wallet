@@ -49,6 +49,14 @@ describe('Transfers (e2e, infra real)', () => {
       select: { id: true },
     });
     const walletIds = wallets.map((w) => w.id);
+    const transactions = await prisma.transaction.findMany({
+      where: { originWalletId: { in: walletIds } },
+      select: { id: true },
+    });
+    const transactionIds = transactions.map((t) => t.id);
+    await prisma.outboxEvent.deleteMany({
+      where: { aggregateId: { in: transactionIds } },
+    });
     await prisma.ledgerEntry.deleteMany({
       where: { walletId: { in: walletIds } },
     });

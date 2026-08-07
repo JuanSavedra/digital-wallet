@@ -150,10 +150,31 @@ export class TransactionsService {
           ],
         });
 
-        return tx.transaction.update({
+        const completed = await tx.transaction.update({
           where: { id: transaction.id },
           data: { status: 'COMPLETED' },
         });
+
+        // Outbox pattern: o evento só existe porque está na mesma
+        // transação SQL do débito/crédito/ledger — se qualquer coisa acima
+        // falhar, o rollback também desfaz este insert. Quem publica de
+        // fato no RabbitMQ é o OutboxRelayService (Escopo 7 "relay").
+        await tx.outboxEvent.create({
+          data: {
+            aggregateId: completed.id,
+            eventType: 'transaction.completed',
+            payload: {
+              transactionId: completed.id,
+              originWalletId,
+              destinationWalletId,
+              amount: amount.toString(),
+              status: completed.status,
+            },
+            status: 'PENDING',
+          },
+        });
+
+        return completed;
       });
     } catch (error) {
       await this.prisma.transaction.update({

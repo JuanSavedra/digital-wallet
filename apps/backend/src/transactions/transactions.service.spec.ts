@@ -31,6 +31,7 @@ describe('TransactionsService', () => {
     wallet: Record<string, jest.Mock>;
     ledgerEntry: Record<string, jest.Mock>;
     transaction: Record<string, jest.Mock>;
+    outboxEvent: Record<string, jest.Mock>;
   };
 
   const origin = {
@@ -53,6 +54,7 @@ describe('TransactionsService', () => {
       wallet: { findUniqueOrThrow: jest.fn(), updateMany: jest.fn() },
       ledgerEntry: { createMany: jest.fn() },
       transaction: { update: jest.fn() },
+      outboxEvent: { create: jest.fn() },
     };
 
     prisma = {
@@ -128,6 +130,20 @@ describe('TransactionsService', () => {
       ],
     });
     expect(result).toEqual({ id: 'tx-1', status: 'COMPLETED' });
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith({
+      data: {
+        aggregateId: 'tx-1',
+        eventType: 'transaction.completed',
+        payload: {
+          transactionId: 'tx-1',
+          originWalletId: origin.id,
+          destinationWalletId: destination.id,
+          amount: '2500',
+          status: 'COMPLETED',
+        },
+        status: 'PENDING',
+      },
+    });
     // A ordenação determinística das chaves acontece dentro do
     // RedisLockService (testado em redis-lock.service.spec.ts); aqui só
     // importa que o service passe as duas chaves de carteira envolvidas.
