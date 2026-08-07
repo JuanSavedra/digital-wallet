@@ -14,5 +14,99 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  wallet Wallet?
+
   @@map("users")
+}
+
+// Uma carteira por usuário no MVP (moeda única, BRL — ver TODO.md Escopo 0).
+model Wallet {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  balance   BigInt   @default(0) // saldo em centavos
+  version   Int      @default(0) // lock otimista, complementar ao lock distribuído no Redis (Escopo 6)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  outgoingTransactions Transaction[] @relation("OriginWallet")
+  incomingTransactions Transaction[] @relation("DestinationWallet")
+  ledgerEntries        LedgerEntry[]
+
+  @@map("wallets")
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model Transaction {
+  id                  String            @id @default(uuid())
+  originWalletId      String            @map("origin_wallet_id")
+  destinationWalletId String            @map("destination_wallet_id")
+  amount              BigInt // centavos
+  status              TransactionStatus @default(PENDING)
+  idempotencyKey      String            @unique @map("idempotency_key")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+
+  originWallet      Wallet @relation("OriginWallet", fields: [originWalletId], references: [id])
+  destinationWallet Wallet @relation("DestinationWallet", fields: [destinationWalletId], references: [id])
+
+  ledgerEntries LedgerEntry[]
+
+  @@index([originWalletId])
+  @@index([destinationWalletId])
+  @@index([status])
+  @@map("transactions")
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+// Livro-razão imutável: cada transação gera dois lançamentos (débito na
+// origem, crédito no destino), permitindo auditoria e reconstrução de saldo
+// independente da coluna wallets.balance.
+model LedgerEntry {
+  id            String          @id @default(uuid())
+  walletId      String          @map("wallet_id")
+  transactionId String          @map("transaction_id")
+  direction     LedgerDirection
+  amount        BigInt // centavos, sempre positivo; direction indica débito/crédito
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  wallet      Wallet      @relation(fields: [walletId], references: [id])
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@index([walletId])
+  @@index([transactionId])
+  @@map("transaction_entries")
+}
+
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+}
+
+// Outbox pattern: o evento só é inserido aqui na mesma transação SQL que
+// persiste a operação de negócio (ver Escopo 7). aggregateId não é uma FK
+// de propósito — a outbox é genérica e pode vir a carregar eventos de
+// outros agregados além de Transaction no futuro.
+model OutboxEvent {
+  id          String       @id @default(uuid())
+  aggregateId String       @map("aggregate_id")
+  eventType   String       @map("event_type")
+  payload     Json
+  status      OutboxStatus @default(PENDING)
+  createdAt   DateTime     @default(now()) @map("created_at")
+  publishedAt DateTime?    @map("published_at")
+
+  @@index([status])
+  @@index([aggregateId])
+  @@map("outbox_events")
 }
