@@ -112,6 +112,22 @@ button:disabled {
   font-size: 14px;
 }
 
+.deposit-box {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.deposit-box h2 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.deposit-hint {
+  font-size: 13px;
+  color: var(--text);
+}
+
 .balance {
   font-size: 40px;
   font-weight: 600;
