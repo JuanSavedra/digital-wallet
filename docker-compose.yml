@@ -46,10 +46,39 @@ services:
       timeout: 10s
       retries: 10
 
+  backend:
+    build:
+      context: ./apps/backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Dentro da rede do compose, os serviços são resolvidos pelo nome do
+      # serviço, não por "localhost" (que é o valor usado para dev local
+      # fora de containers, no .env).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet}@postgres:5432/${POSTGRES_DB:-wallet}?schema=public
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-wallet}:${RABBITMQ_PASSWORD:-wallet}@rabbitmq:5672
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./apps/frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
-
-# Os serviços "backend" e "frontend" serão adicionados aqui quando os
-# respectivos Dockerfiles existirem (ver TODO.md, Escopo 2 em diante).

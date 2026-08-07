@@ -8,9 +8,9 @@ This is a digital wallet project (internal transfers/payments) being built incre
 
 Monorepo layout:
 - `apps/frontend` — React + TypeScript (Vite). Currently still the stock Vite template (`App.tsx` has default markup) — no wallet UI yet.
-- `apps/backend` — NestJS + TypeScript. Not scaffolded yet (empty, next scope).
+- `apps/backend` — NestJS + TypeScript. Scaffolded with the module skeleton (`AuthModule`, `UsersModule`, `WalletsModule`, `TransactionsModule`, `LedgerModule`, `OutboxModule`, `MessagingModule`, `CacheModule`) — all currently empty, to be filled in as later scopes land. No business logic, no Prisma schema, no auth logic yet.
 
-Infra (docker-compose at repo root) currently provisions Postgres, Redis, and RabbitMQ only. `backend`/`frontend` services will be added to `docker-compose.yml` once their Dockerfiles exist.
+Infra (docker-compose at repo root) provisions Postgres, Redis, RabbitMQ, `backend`, and `frontend` — the full stack runs with `docker compose up --build`. Backend connects to the other services by their compose service name (`postgres`, `redis`, `rabbitmq`), not `localhost` — see the `environment:` overrides on the `backend` service in `docker-compose.yml`.
 
 ## Commands
 
@@ -24,9 +24,17 @@ Frontend (`apps/frontend`):
 - `npm run lint` — run ESLint over the project
 - `npm run preview` — preview the production build locally
 
-Backend (`apps/backend`): not scaffolded yet — commands will be added here once NestJS is initialized.
+Backend (`apps/backend`):
+- `npm run start:dev` — start Nest in watch mode
+- `npm run build` — compile via `nest build`
+- `npm run lint` — ESLint with `--fix`
+- `npm run test` — Jest unit tests (`*.spec.ts` next to the source file they cover)
+- `npm run test:e2e` — Jest e2e tests (`test/*.e2e-spec.ts`); env is hermetic via `test/e2e-env.setup.ts`, does not require the repo-root `.env` to exist
+- Reads env vars from the repo-root `.env` in dev (see `envFilePath` in `src/app.module.ts`) — copy `.env.example` at the repo root first
+- Swagger UI at `/api/docs`; all routes are prefixed `/api/v1` (global prefix `api` + URI versioning, default version `1`)
+- `configureApp()` in `src/setup-app.ts` holds the prefix/versioning/pipes/filters/interceptors setup shared between `main.ts` and the e2e tests — extend it there, not separately in both places
 
-There is no test runner configured yet. If tests are added, record the run/single-test commands here.
+Frontend has no test runner configured yet. If tests are added, record the run/single-test commands here.
 
 ## Tooling notes
 
@@ -38,4 +46,5 @@ There is no test runner configured yet. If tests are added, record the run/singl
 ## Working style for this project
 
 - Implement strictly by scope, one at a time (per `TODO.md`), confirming before moving to the next — the user explicitly asked not to bundle many tasks together.
+- A scope is not done just because it runs locally via `npm`. Every scope must also: (1) be containerized — Dockerfile + service wired into `docker-compose.yml`, verified with an actual `docker compose up --build` — and (2) have unit tests for new logic, integration tests where components interact, and e2e tests when the change is API/UI-facing. Verify by actually running things, not just writing them.
 - Architecture decisions already closed for this project (do not re-litigate unless the user raises it): monorepo structure, Prisma as ORM, single currency (BRL), money as integer cents.
