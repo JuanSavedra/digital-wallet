@@ -16,6 +16,7 @@ describe('TransactionEventsConsumer', () => {
   let rabbitMqService: jest.Mocked<RabbitMqService>;
   let redisService: jest.Mocked<RedisService>;
   let handler: jest.Mocked<TransactionEventsHandler>;
+  let channelListeners: Record<string, (...args: unknown[]) => void>;
 
   // O consumer dispara `void this.onMessage(msg)` a partir do callback do
   // `channel.consume` de propósito (é assim que uma callback de consumo do
@@ -41,6 +42,7 @@ describe('TransactionEventsConsumer', () => {
   }
 
   beforeEach(async () => {
+    channelListeners = {};
     channel = {
       assertExchange: jest.fn().mockResolvedValue(undefined),
       assertQueue: jest.fn().mockResolvedValue(undefined),
@@ -50,6 +52,11 @@ describe('TransactionEventsConsumer', () => {
       ack: jest.fn(),
       sendToQueue: jest.fn(),
       close: jest.fn().mockResolvedValue(undefined),
+      // O consumer registra listeners de 'close'/'error' no canal para
+      // saber que ele caiu; guardamos os handlers para poder disparar.
+      on: jest.fn((event: string, listener: (...args: unknown[]) => void) => {
+        channelListeners[event] = listener;
+      }),
     };
     const connection = {
       createChannel: jest.fn().mockResolvedValue(channel),
@@ -206,5 +213,62 @@ describe('TransactionEventsConsumer', () => {
         headers: expect.objectContaining({ 'x-retry-count': 1 }),
       }),
     );
+  });
+
+  describe('shutdown: canal do RabbitMQ fechado', () => {
+    // Regressão do CI: com o canal já fechado, o `sendToQueue` da fila de
+    // retry lançava `IllegalOperationError` de dentro de um `void
+    // this.onMessage(...)`. Isso vira unhandled rejection — derruba o
+    // processo em produção e faz o Jest reportar "Test suite failed to run"
+    // mesmo com todos os testes verdes.
+
+    it('não lança quando o canal cai antes de processar; a mensagem fica sem ack', async () => {
+      channelListeners.close();
+      const msg = makeMessage({ id: 'evt-1', aggregateId: 'tx-1' });
+
+      await expect(deliver(msg)).resolves.toBeUndefined();
+
+      // Sem ack e sem republicação: o RabbitMQ reentrega, que é o contrato
+      // at-least-once que a dedupe por Redis já cobre.
+      expect(channel.ack).not.toHaveBeenCalled();
+      expect(channel.sendToQueue).not.toHaveBeenCalled();
+      expect(handler.handle).not.toHaveBeenCalled();
+      // A chave de dedupe nem chega a ser reivindicada.
+      expect(redisService.setIfNotExists).not.toHaveBeenCalled();
+    });
+
+    it('engole o IllegalOperationError quando o canal cai no meio do processamento', async () => {
+      redisService.setIfNotExists.mockResolvedValue(true);
+      redisService.del.mockResolvedValue(undefined);
+      handler.handle.mockRejectedValue(new Error('falha'));
+      // O canal cai entre o handler falhar e a republicação na fila de retry.
+      channel.sendToQueue.mockImplementation(() => {
+        channelListeners.close();
+        throw new Error('Channel closed');
+      });
+      const msg = makeMessage({ id: 'evt-1', aggregateId: 'tx-1' });
+
+      await expect(deliver(msg)).resolves.toBeUndefined();
+
+      expect(channel.ack).not.toHaveBeenCalled();
+    });
+
+    it('não deixa escapar erro inesperado com o canal aberto', async () => {
+      redisService.setIfNotExists.mockRejectedValue(new Error('redis fora'));
+      const msg = makeMessage({ id: 'evt-1', aggregateId: 'tx-1' });
+
+      await expect(deliver(msg)).resolves.toBeUndefined();
+
+      expect(channel.ack).not.toHaveBeenCalled();
+    });
+
+    it('marca o canal como fechado também no evento de erro', async () => {
+      channelListeners.error(new Error('canal quebrou'));
+      const msg = makeMessage({ id: 'evt-1', aggregateId: 'tx-1' });
+
+      await expect(deliver(msg)).resolves.toBeUndefined();
+
+      expect(handler.handle).not.toHaveBeenCalled();
+    });
   });
 });

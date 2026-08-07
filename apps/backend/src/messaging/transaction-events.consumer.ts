@@ -23,6 +23,9 @@ const RETRY_COUNT_HEADER = 'x-retry-count';
 export class TransactionEventsConsumer implements OnModuleInit {
   private readonly logger = new Logger(TransactionEventsConsumer.name);
   private channel?: Channel;
+  /** Vira `true` quando o canal cai (normalmente porque a conexão
+   * compartilhada foi fechada no shutdown). Ver `processMessage`. */
+  private channelClosed = false;
 
   constructor(
     private readonly rabbitMqService: RabbitMqService,
@@ -33,6 +36,19 @@ export class TransactionEventsConsumer implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     const connection = await this.rabbitMqService.getConnection();
     this.channel = await connection.createChannel();
+
+    // Fechar a conexão compartilhada derruba este canal junto. Registrar o
+    // fato aqui é o que permite abortar cedo um processamento em voo em vez
+    // de tentar publicar num canal morto (ver `processMessage`).
+    this.channel.on('close', () => {
+      this.channelClosed = true;
+    });
+    // Sem este listener, um erro de canal vira 'error' não tratado no
+    // EventEmitter e derruba o processo.
+    this.channel.on('error', (error: Error) => {
+      this.channelClosed = true;
+      this.logger.warn(`Canal do consumer com erro: ${error.message}`);
+    });
 
     await this.channel.assertExchange(WALLET_EVENTS_EXCHANGE, 'topic', {
       durable: true,
@@ -84,16 +100,41 @@ export class TransactionEventsConsumer implements OnModuleInit {
   // canal cuja conexão já caiu trava para sempre. Encerrar a conexão em
   // RabbitMqService.onModuleDestroy já fecha todos os canais nela.
 
+  /**
+   * Rede de proteção obrigatória: o callback do `channel.consume` invoca
+   * isto com `void`, então **qualquer** rejeição que escape daqui vira uma
+   * unhandled rejection — que derruba o processo em produção e faz a suíte
+   * e2e inteira falhar como "Test suite failed to run", mesmo com todos os
+   * testes verdes (foi exatamente o que aconteceu no CI: o app fechava a
+   * conexão do RabbitMQ enquanto uma mensagem ainda estava em voo, e o
+   * `sendToQueue` da fila de retry estourava `IllegalOperationError`).
+   *
+   * A mensagem não ackada volta para a fila e é reentregue — o contrato
+   * at-least-once que a dedupe por Redis já cobre.
+   */
   private async onMessage(msg: ConsumeMessage): Promise<void> {
-    const event = JSON.parse(msg.content.toString()) as WalletEventMessage;
-    // O evento carrega o correlationId que nasceu na requisição HTTP que
-    // originou a transferência (ver TransactionsService/OutboxRelayService);
-    // quando não tem (ex. mensagem antiga, mensagem sem correlationId),
-    // cria um novo só para amarrar os logs deste processamento entre si.
-    return RequestContext.run(
-      { correlationId: event.correlationId ?? randomUUID() },
-      () => this.processMessage(msg, event),
-    );
+    try {
+      const event = JSON.parse(msg.content.toString()) as WalletEventMessage;
+      // O evento carrega o correlationId que nasceu na requisição HTTP que
+      // originou a transferência (ver TransactionsService/OutboxRelayService);
+      // quando não tem (ex. mensagem antiga, mensagem sem correlationId),
+      // cria um novo só para amarrar os logs deste processamento entre si.
+      await RequestContext.run(
+        { correlationId: event.correlationId ?? randomUUID() },
+        () => this.processMessage(msg, event),
+      );
+    } catch (error) {
+      const message = (error as Error).message;
+      if (this.channelClosed) {
+        this.logger.warn(
+          `Processamento abortado: canal fechado durante o shutdown (${message}). A mensagem será reentregue.`,
+        );
+        return;
+      }
+      this.logger.error(
+        `Falha inesperada ao processar mensagem, sem ack (será reentregue): ${message}`,
+      );
+    }
   }
 
   private async processMessage(
@@ -103,6 +144,16 @@ export class TransactionEventsConsumer implements OnModuleInit {
     const channel = this.getChannel();
     const retryCount = this.getRetryCount(msg);
     const dedupKey = `processed:event:${event.id}`;
+
+    // Se o canal já caiu, não há como ackar nem republicar: qualquer coisa
+    // feita a partir daqui só produz erro. Sair antes evita também gastar a
+    // chave de dedupe num processamento que não vai poder ser concluído.
+    if (this.channelClosed) {
+      this.logger.warn(
+        `Canal fechado antes de processar o evento ${event.id}; a mensagem será reentregue.`,
+      );
+      return;
+    }
 
     const claimed = await this.redisService.setIfNotExists(
       dedupKey,
