@@ -26,6 +26,7 @@ describe('WalletsService', () => {
         create: jest.fn(),
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
+        findFirst: jest.fn(),
       },
       ledgerEntry: { findMany: jest.fn() },
     };
@@ -57,6 +58,17 @@ describe('WalletsService', () => {
 
     expect(prisma.wallet.findUnique).toHaveBeenCalledWith({
       where: { userId: 'user-1' },
+    });
+    expect(result).toEqual(wallet);
+  });
+
+  it('findByUserEmail delegates to prisma.wallet.findFirst filtering by the related user email', async () => {
+    prisma.wallet.findFirst.mockResolvedValue(wallet);
+
+    const result = await walletsService.findByUserEmail('user@example.com');
+
+    expect(prisma.wallet.findFirst).toHaveBeenCalledWith({
+      where: { user: { email: 'user@example.com' } },
     });
     expect(result).toEqual(wallet);
   });

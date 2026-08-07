@@ -1,4 +1,6 @@
 import { INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
@@ -16,6 +18,8 @@ import { configureApp } from '../src/setup-app';
 describe('Wallets ownership (e2e, infra real)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
+  let jwtService: JwtService;
+  let configService: ConfigService;
 
   const userAEmail = `wallets-a-${randomUUID()}@example.com`;
   const userBEmail = `wallets-b-${randomUUID()}@example.com`;
@@ -32,6 +36,8 @@ describe('Wallets ownership (e2e, infra real)', () => {
     await app.init();
 
     prisma = app.get(PrismaService);
+    jwtService = app.get(JwtService);
+    configService = app.get(ConfigService);
   });
 
   afterAll(async () => {
@@ -54,6 +60,22 @@ describe('Wallets ownership (e2e, infra real)', () => {
       .post('/api/v1/auth/login')
       .send({ email, password });
     return (loginResponse.body as AuthTokens).accessToken;
+  }
+
+  // POST /auth/login tem rate limit de 5/min (proposital). Os testes de
+  // lookup abaixo registram vários usuários; assinar o token direto evita
+  // estourar esse limite só de preparação de cenário, sem relação nenhuma
+  // com o que este bloco testa.
+  async function registerAndSignToken(email: string) {
+    allEmails.push(email);
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({ email, password });
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    return jwtService.signAsync(
+      { sub: user.id, email: user.email },
+      { secret: configService.getOrThrow<string>('JWT_ACCESS_SECRET') },
+    );
   }
 
   it('auto-provisions a wallet with zero balance on registration', async () => {
@@ -111,5 +133,56 @@ describe('Wallets ownership (e2e, infra real)', () => {
       .set('Authorization', `Bearer ${accessToken}`);
 
     expect(response.status).toBe(404);
+  });
+
+  describe('GET /wallets/lookup', () => {
+    it('resolves the wallet id for another user by email', async () => {
+      const targetEmail = `wallets-f-${randomUUID()}@example.com`;
+      const targetToken = await registerAndSignToken(targetEmail);
+      const targetMeResponse = await request(app.getHttpServer())
+        .get('/api/v1/wallets/me')
+        .set('Authorization', `Bearer ${targetToken}`);
+      const targetWalletId = (targetMeResponse.body as { id: string }).id;
+
+      const requesterToken = await registerAndSignToken(
+        `wallets-g-${randomUUID()}@example.com`,
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/wallets/lookup')
+        .query({ email: targetEmail })
+        .set('Authorization', `Bearer ${requesterToken}`);
+
+      expect(response.status).toBe(200);
+      expect((response.body as { walletId: string }).walletId).toBe(
+        targetWalletId,
+      );
+    });
+
+    it('returns 404 when no user has that email', async () => {
+      const requesterToken = await registerAndSignToken(
+        `wallets-h-${randomUUID()}@example.com`,
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/wallets/lookup')
+        .query({ email: `nobody-${randomUUID()}@example.com` })
+        .set('Authorization', `Bearer ${requesterToken}`);
+
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 400 for a malformed email', async () => {
+      const requesterToken = await registerAndSignToken(
+        `wallets-i-${randomUUID()}@example.com`,
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/wallets/lookup')
+        .query({ email: 'not-an-email' })
+        .set('Authorization', `Bearer ${requesterToken}`);
+
+      expect(response.status).toBe(400);
+    });
   });
 });

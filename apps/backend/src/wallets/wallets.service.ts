@@ -35,6 +35,12 @@ export class WalletsService {
     return this.prisma.wallet.findUnique({ where: { id } });
   }
 
+  /** Permite transferir informando o e-mail do destinatário em vez de
+   * decorar/copiar o UUID da carteira dele. */
+  findByUserEmail(email: string): Promise<Wallet | null> {
+    return this.prisma.wallet.findFirst({ where: { user: { email } } });
+  }
+
   async assertOwnership(walletId: string, userId: string): Promise<Wallet> {
     const wallet = await this.findById(walletId);
     if (!wallet) {

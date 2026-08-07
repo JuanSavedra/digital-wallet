@@ -16,6 +16,9 @@ export function configureApp(app: INestApplication): void {
     type: VersioningType.URI,
     defaultVersion: '1',
   });
+  // Frontend roda em outra origem/porta (Vite dev server ou nginx no
+  // Docker) — sem isso o navegador bloqueia as chamadas por CORS.
+  app.enableCors();
 
   app.useGlobalPipes(
     new ValidationPipe({

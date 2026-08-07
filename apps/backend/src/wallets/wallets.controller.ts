@@ -10,6 +10,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { RequestUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LookupQueryDto } from './dto/lookup-query.dto';
 import { StatementQueryDto } from './dto/statement-query.dto';
 import { toWalletResponse } from './dto/wallet-response';
 import { WalletOwnerGuard } from './guards/wallet-owner.guard';
@@ -46,6 +47,17 @@ export class WalletsController {
       query.page,
     );
     return { page: query.page, entries };
+  }
+
+  @Get('lookup')
+  async lookup(@Query() query: LookupQueryDto) {
+    const wallet = await this.walletsService.findByUserEmail(query.email);
+    if (!wallet) {
+      throw new NotFoundException(
+        'Nenhuma carteira encontrada para este e-mail',
+      );
+    }
+    return { walletId: wallet.id };
   }
 
   @UseGuards(WalletOwnerGuard)
