@@ -8,6 +8,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import {
+  TRANSACTIONS_DLQ_QUEUE,
   TRANSACTION_COMPLETED_ROUTING_KEY,
   WALLET_EVENTS_EXCHANGE,
 } from '../src/messaging/constants';
@@ -15,6 +16,8 @@ import { WalletEventMessage } from '../src/messaging/interfaces/wallet-event.int
 import { TransactionEventsHandler } from '../src/messaging/transaction-events.handler';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { configureApp } from '../src/setup-app';
+import { E2E_ADMIN_EMAIL } from './utils/e2e-admin';
+import { deleteLedgerEntries } from './utils/ledger-cleanup';
 import { poll } from './utils/poll';
 
 /**
@@ -47,6 +50,10 @@ describe('Messaging: retry, DLQ e idempotência do consumidor (e2e, infra real)'
     }),
   };
 
+  // As rotas /admin/dlq agora exigem estar em ADMIN_EMAILS (Escopo 13). A
+  // variável é definida no setupFiles do Jest, antes do import de AppModule.
+  const adminEmail = E2E_ADMIN_EMAIL;
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -62,7 +69,26 @@ describe('Messaging: retry, DLQ e idempotência do consumidor (e2e, infra real)'
     prisma = app.get(PrismaService);
     jwtService = app.get(JwtService);
     configService = app.get(ConfigService);
+
+    // O broker é compartilhado entre execuções: mensagens deixadas por uma
+    // suíte anterior fariam o poll de "chegou algo na DLQ?" acertar de
+    // primeira, sem esperar o evento deste teste realmente esgotar as
+    // tentativas — e o assert seguinte leria 0 tentativas.
+    await purgeDlq();
   });
+
+  async function purgeDlq(): Promise<void> {
+    const connection = await amqplib.connect(
+      configService.getOrThrow<string>('RABBITMQ_URL'),
+    );
+    try {
+      const channel = await connection.createChannel();
+      await channel.purgeQueue(TRANSACTIONS_DLQ_QUEUE);
+      await channel.close();
+    } finally {
+      await connection.close();
+    }
+  }
 
   afterAll(async () => {
     const users = await prisma.user.findMany({
@@ -83,9 +109,7 @@ describe('Messaging: retry, DLQ e idempotência do consumidor (e2e, infra real)'
     await prisma.outboxEvent.deleteMany({
       where: { aggregateId: { in: transactionIds } },
     });
-    await prisma.ledgerEntry.deleteMany({
-      where: { walletId: { in: walletIds } },
-    });
+    await deleteLedgerEntries(prisma, { walletId: { in: walletIds } });
     await prisma.transaction.deleteMany({
       where: { originWalletId: { in: walletIds } },
     });
@@ -94,8 +118,11 @@ describe('Messaging: retry, DLQ e idempotência do consumidor (e2e, infra real)'
     await app.close();
   }, 15_000);
 
-  async function createFundedUser(initialBalanceCents: bigint) {
-    const email = `messaging-${randomUUID()}@example.com`;
+  async function createFundedUser(
+    initialBalanceCents: bigint,
+    emailOverride?: string,
+  ) {
+    const email = emailOverride ?? `messaging-${randomUUID()}@example.com`;
     allEmails.push(email);
     await request(app.getHttpServer())
       .post('/api/v1/auth/register')
@@ -148,7 +175,7 @@ describe('Messaging: retry, DLQ e idempotência do consumidor (e2e, infra real)'
     const transactionId = await makeTransfer();
     failUntilAttempt.set(transactionId, Number.POSITIVE_INFINITY);
 
-    const admin = await createFundedUser(0n);
+    const admin = await createFundedUser(0n, adminEmail);
 
     await poll(
       async () => {
@@ -184,6 +211,11 @@ describe('Messaging: retry, DLQ e idempotência do consumidor (e2e, infra real)'
         const response = await request(app.getHttpServer())
           .get('/api/v1/admin/dlq')
           .set('Authorization', `Bearer ${admin.accessToken}`);
+        if (response.status !== 200) {
+          throw new Error(
+            `admin/dlq respondeu ${response.status}: ${JSON.stringify(response.body)}`,
+          );
+        }
         return (response.body as { messageCount: number }).messageCount;
       },
       (count) => count === 0,

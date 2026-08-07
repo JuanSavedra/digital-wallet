@@ -57,6 +57,48 @@ describe('envValidationSchema', () => {
     expect(error).toBeDefined();
   });
 
+  describe('produção: segredos fracos derrubam o boot', () => {
+    // Fora de produção a regra é frouxa de propósito (não quebrar o setup
+    // local de quem copiou o .env.example), mas subir com o placeholder
+    // valendo significa que qualquer um que leia o repositório assina um
+    // JWT válido e se autentica como qualquer usuário.
+    const prodEnv = {
+      ...validEnv,
+      NODE_ENV: 'production',
+      JWT_ACCESS_SECRET: 'a'.repeat(32),
+      JWT_REFRESH_SECRET: 'b'.repeat(32),
+    };
+
+    it('accepts strong secrets', () => {
+      expect(envValidationSchema.validate(prodEnv).error).toBeUndefined();
+    });
+
+    it('rejects the placeholder from .env.example', () => {
+      const { error } = envValidationSchema.validate({
+        ...prodEnv,
+        JWT_ACCESS_SECRET: 'change-me-access',
+      });
+
+      expect(error).toBeDefined();
+    });
+
+    it('rejects a secret shorter than 32 characters', () => {
+      const { error } = envValidationSchema.validate({
+        ...prodEnv,
+        JWT_REFRESH_SECRET: 'b'.repeat(31),
+      });
+
+      expect(error).toBeDefined();
+    });
+
+    it('still accepts a 16-char secret outside production', () => {
+      expect(
+        envValidationSchema.validate({ ...validEnv, NODE_ENV: 'development' })
+          .error,
+      ).toBeUndefined();
+    });
+  });
+
   it('rejects an invalid NODE_ENV value', () => {
     const { error } = envValidationSchema.validate({
       ...validEnv,

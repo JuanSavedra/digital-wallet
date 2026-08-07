@@ -26,14 +26,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ? exception.getResponse()
       : 'Internal server error';
 
-    const message =
+    const rawMessage =
       typeof exceptionResponse === 'string'
         ? exceptionResponse
         : ((exceptionResponse as { message?: string | string[] }).message ??
           exceptionResponse);
 
+    // Erro não previsto: a mensagem original pode carregar detalhe de
+    // infraestrutura (SQL, nome de coluna, host do banco, trecho do
+    // payload). Vai inteira para o log, mas o cliente só recebe o genérico.
+    const message = isHttpException ? rawMessage : 'Internal server error';
+
     if (!isHttpException) {
-      this.logger.error(exception);
+      this.logger.error(
+        exception instanceof Error ? exception : String(exception),
+        exception instanceof Error ? exception.stack : undefined,
+      );
     }
 
     response.status(status).json({

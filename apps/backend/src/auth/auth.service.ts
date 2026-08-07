@@ -19,6 +19,19 @@ import {
 
 const PASSWORD_SALT_ROUNDS = 10;
 const REFRESH_TOKEN_REDIS_PREFIX = 'auth:refresh:';
+const JWT_ALGORITHM = 'HS256';
+
+/**
+ * Hash descartável, com o mesmo custo dos hashes reais, usado quando o
+ * e-mail não existe. Sem ele o login responde na hora para e-mail
+ * inexistente e só depois de ~100ms para e-mail existente com senha errada
+ * — diferença suficiente para enumerar quem tem conta na carteira sem
+ * precisar de nenhuma credencial válida.
+ */
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
+  'timing-attack-placeholder',
+  PASSWORD_SALT_ROUNDS,
+);
 
 @Injectable()
 export class AuthService {
@@ -45,12 +58,15 @@ export class AuthService {
 
   async login(email: string, password: string): Promise<AuthTokens> {
     const user = await this.usersService.findByEmail(email);
-    if (!user) {
-      throw new UnauthorizedException('Credenciais inválidas');
-    }
 
-    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordMatches) {
+    // A comparação roda mesmo sem usuário (contra o hash descartável), para
+    // que o tempo de resposta não denuncie se o e-mail existe ou não.
+    const passwordMatches = await bcrypt.compare(
+      password,
+      user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    );
+
+    if (!user || !passwordMatches) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
@@ -82,6 +98,16 @@ export class AuthService {
     await this.redisService.del(`${REFRESH_TOKEN_REDIS_PREFIX}${payload.jti}`);
   }
 
+  /** Validade do refresh token em ms — usada como `maxAge` do cookie
+   * httpOnly, para que ele expire junto com o token que carrega. */
+  getRefreshTokenTtlMs(): number {
+    return (
+      this.toSeconds(
+        this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '7d'),
+      ) * 1000
+    );
+  }
+
   private async issueTokens(
     userId: string,
     email: string,
@@ -93,6 +119,7 @@ export class AuthService {
     const accessToken = await this.jwtService.signAsync(accessPayload, {
       secret: this.configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
       expiresIn: accessExpiresInSeconds,
+      algorithm: JWT_ALGORITHM,
     });
 
     const jti = randomUUID();
@@ -103,6 +130,7 @@ export class AuthService {
     const refreshToken = await this.jwtService.signAsync(refreshPayload, {
       secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
       expiresIn: refreshExpiresInSeconds,
+      algorithm: JWT_ALGORITHM,
     });
 
     await this.redisService.set(
@@ -122,6 +150,9 @@ export class AuthService {
     try {
       return this.jwtService.verify<RefreshTokenPayload>(refreshToken, {
         secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
+        // Fixar o algoritmo impede que um token forjado com outro `alg` no
+        // header seja aceito pela biblioteca.
+        algorithms: [JWT_ALGORITHM],
       });
     } catch {
       throw new UnauthorizedException('Refresh token inválido ou expirado');

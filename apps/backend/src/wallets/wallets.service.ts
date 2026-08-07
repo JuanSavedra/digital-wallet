@@ -81,12 +81,14 @@ export class WalletsService {
   }
 
   /**
-   * Extrato paginado (mais recente primeiro), mesclando o ledger de
-   * transferências com os depósitos pagos. Cada fonte busca `skip +
-   * pageSize` candidatos e a mescla é ordenada/paginada em memória — só a
-   * página 1 é ativamente invalidada quando algo novo acontece (ver
-   * `invalidateWalletCaches`), então essa aproximação é aceitável: páginas
-   * mais fundo na paginação praticamente não mudam depois de escritas.
+   * Extrato paginado (mais recente primeiro), lido direto do livro-razão.
+   *
+   * Antes do Escopo 13 isso mesclava duas fontes (ledger + depósitos pagos)
+   * em memória, porque depósitos não geravam lançamento. Agora que geram
+   * (`DepositsService.confirmPaid`), o razão é a única fonte — o que além de
+   * simplificar corrige a paginação (o `skip`/`take` acontece no Postgres) e
+   * elimina o `take: skip + pageSize` que fazia páginas altas varrerem a
+   * tabela inteira.
    */
   async getStatement(
     walletId: string,
@@ -100,49 +102,32 @@ export class WalletsService {
     }
     this.metricsService.recordCacheMiss('wallet_statement');
 
-    const skip = (page - 1) * STATEMENT_PAGE_SIZE;
-    const candidateLimit = skip + STATEMENT_PAGE_SIZE;
+    const entries = await this.prisma.ledgerEntry.findMany({
+      where: { walletId },
+      // Desempate por id mantém a ordem estável entre páginas quando dois
+      // lançamentos compartilham o mesmo `createdAt` — o caso normal, já
+      // que débito e crédito de uma transferência nascem juntos.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (page - 1) * STATEMENT_PAGE_SIZE,
+      take: STATEMENT_PAGE_SIZE,
+    });
 
-    const [ledgerEntries, deposits] = await Promise.all([
-      this.prisma.ledgerEntry.findMany({
-        where: { walletId },
-        orderBy: { createdAt: 'desc' },
-        take: candidateLimit,
-      }),
-      this.prisma.walletDeposit.findMany({
-        where: { walletId, status: 'PAID' },
-        orderBy: { createdAt: 'desc' },
-        take: candidateLimit,
-      }),
-    ]);
-
-    const merged: StatementEntry[] = [
-      ...ledgerEntries.map((entry): StatementEntry => ({
-        id: entry.id,
-        source: 'transfer',
-        transactionId: entry.transactionId,
-        direction: entry.direction,
-        amount: entry.amount.toString(),
-        createdAt: entry.createdAt,
-      })),
-      ...deposits.map((deposit): StatementEntry => ({
-        id: deposit.id,
-        source: 'deposit',
-        transactionId: null,
-        direction: 'CREDIT',
-        amount: deposit.amount.toString(),
-        createdAt: deposit.paidAt ?? deposit.createdAt,
-      })),
-    ]
-      .sort((a, b) => b.createdAt.valueOf() - a.createdAt.valueOf())
-      .slice(skip, skip + STATEMENT_PAGE_SIZE);
+    const statement: StatementEntry[] = entries.map((entry) => ({
+      id: entry.id,
+      source: entry.depositId ? 'deposit' : 'transfer',
+      transactionId: entry.transactionId,
+      depositId: entry.depositId,
+      direction: entry.direction,
+      amount: entry.amount.toString(),
+      createdAt: entry.createdAt,
+    }));
 
     await this.redisService.set(
       cacheKey,
-      JSON.stringify(merged),
+      JSON.stringify(statement),
       STATEMENT_CACHE_TTL_SECONDS,
     );
-    return merged;
+    return statement;
   }
 
   async invalidateWalletCaches(walletId: string): Promise<void> {

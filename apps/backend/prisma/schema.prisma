@@ -71,21 +71,35 @@ enum LedgerDirection {
 }
 
 // Livro-razão imutável: cada transação gera dois lançamentos (débito na
-// origem, crédito no destino), permitindo auditoria e reconstrução de saldo
-// independente da coluna wallets.balance.
+// origem, crédito no destino) e cada depósito confirmado gera um crédito,
+// permitindo auditoria e reconstrução de saldo independente da coluna
+// wallets.balance.
+//
+// Imutabilidade é garantida no banco, não só por convenção: triggers
+// `BEFORE UPDATE`/`BEFORE DELETE` em transaction_entries rejeitam qualquer
+// alteração (ver migration add_ledger_deposits_and_append_only). A única
+// saída é a flag de sessão `app.ledger_maintenance`, usada apenas pela
+// limpeza dos testes.
+//
+// `transactionId` e `depositId` são exclusivos entre si — um CHECK no banco
+// garante que exatamente um dos dois esteja preenchido, para que todo
+// lançamento tenha sempre uma origem rastreável.
 model LedgerEntry {
   id            String          @id @default(uuid())
   walletId      String          @map("wallet_id")
-  transactionId String          @map("transaction_id")
+  transactionId String?         @map("transaction_id")
+  depositId     String?         @map("deposit_id")
   direction     LedgerDirection
   amount        BigInt // centavos, sempre positivo; direction indica débito/crédito
   createdAt     DateTime        @default(now()) @map("created_at")
 
-  wallet      Wallet      @relation(fields: [walletId], references: [id])
-  transaction Transaction @relation(fields: [transactionId], references: [id])
+  wallet      Wallet         @relation(fields: [walletId], references: [id])
+  transaction Transaction?   @relation(fields: [transactionId], references: [id])
+  deposit     WalletDeposit? @relation(fields: [depositId], references: [id])
 
   @@index([walletId])
   @@index([transactionId])
+  @@index([depositId])
   @@map("transaction_entries")
 }
 
@@ -137,7 +151,8 @@ model WalletDeposit {
   createdAt         DateTime      @default(now()) @map("created_at")
   paidAt            DateTime?     @map("paid_at")
 
-  wallet Wallet @relation(fields: [walletId], references: [id])
+  wallet        Wallet        @relation(fields: [walletId], references: [id])
+  ledgerEntries LedgerEntry[]
 
   @@index([walletId])
   @@map("wallet_deposits")

@@ -7,7 +7,14 @@ import { RedisService } from '../cache/redis.service';
 import { UsersService } from '../users/users.service';
 import { WalletsService } from '../wallets/wallets.service';
 
-jest.mock('bcrypt');
+// Fábrica em vez do auto-mock: `auth.service.ts` chama `hashSync` no
+// carregamento do módulo para montar o hash descartável do login, e o
+// auto-mock devolveria `undefined` ali.
+jest.mock('bcrypt', () => ({
+  hash: jest.fn(),
+  hashSync: jest.fn(() => '$2b$10$dummy-hash-para-teste'),
+  compare: jest.fn(),
+}));
 
 describe('AuthService', () => {
   let authService: AuthService;
@@ -137,6 +144,40 @@ describe('AuthService', () => {
       await expect(
         authService.login('missing@example.com', 'whatever'),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('still runs bcrypt.compare for an unknown email, so response time does not reveal who has an account', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+      (bcrypt.compare as jest.Mock).mockClear();
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        authService.login('missing@example.com', 'whatever'),
+      ).rejects.toThrow(UnauthorizedException);
+
+      // Sem esta comparação contra o hash descartável, o login responderia
+      // na hora para e-mail inexistente e só depois de ~100ms para e-mail
+      // existente — diferença suficiente para enumerar as contas da carteira.
+      expect(bcrypt.compare).toHaveBeenCalledTimes(1);
+      expect(bcrypt.compare).toHaveBeenCalledWith(
+        'whatever',
+        expect.stringMatching(/^\$2[aby]\$/),
+      );
+    });
+
+    it('gives the same message for unknown email and wrong password', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+      const unknownEmail = await authService
+        .login('missing@example.com', 'whatever')
+        .catch((error: Error) => error.message);
+
+      usersService.findByEmail.mockResolvedValue(user);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+      const wrongPassword = await authService
+        .login('user@example.com', 'wrong')
+        .catch((error: Error) => error.message);
+
+      expect(unknownEmail).toBe(wrongPassword);
     });
 
     it('throws UnauthorizedException when the password does not match', async () => {

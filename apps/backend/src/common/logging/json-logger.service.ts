@@ -1,5 +1,6 @@
 import { LoggerService, LogLevel } from '@nestjs/common';
 import { RequestContext } from '../context/request-context';
+import { redact } from './redact';
 
 interface LogLine {
   timestamp: string;
@@ -43,13 +44,22 @@ export class JsonLoggerService implements LoggerService {
     context?: string,
     trace?: string,
   ): void {
+    // Tudo passa por `redact` antes de virar texto: senha, token, header de
+    // autorização e credenciais embutidas em URLs nunca chegam ao stdout,
+    // mesmo quando o call site loga um objeto inteiro sem pensar nisso.
+    const safeMessage = redact(message);
+    // Error nu (`logger.error(exception)`) serializava como "{}" no
+    // JSON.stringify direto — `redact` o converte para name/message/stack.
     const line: LogLine = {
       timestamp: new Date().toISOString(),
       level,
-      message: typeof message === 'string' ? message : JSON.stringify(message),
+      message:
+        typeof safeMessage === 'string'
+          ? safeMessage
+          : JSON.stringify(safeMessage),
       context,
       correlationId: RequestContext.getCorrelationId(),
-      trace,
+      trace: trace ? (redact(trace) as string) : undefined,
     };
 
     const stream = level === 'error' ? process.stderr : process.stdout;

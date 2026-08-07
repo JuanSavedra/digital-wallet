@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -11,6 +12,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WalletsService } from './wallets.service';
 
 const PRODUCT_NAME = 'Depósito na carteira';
+
+/**
+ * Cada depósito cria um produto E um checkout na conta da AbacatePay, que
+ * nunca são removidos. Sem um teto, um usuário (ou um bug de retry no
+ * frontend) enche a conta do gateway com objetos até ela ficar inutilizável
+ * — e o rate limit por si só não resolve, porque o problema é o acúmulo, não
+ * a taxa. Depósitos pendentes ficam pendentes até serem pagos ou expirarem.
+ */
+const MAX_PENDING_DEPOSITS_PER_WALLET = 5;
 
 @Injectable()
 export class DepositsService {
@@ -28,6 +38,15 @@ export class DepositsService {
     const wallet = await this.walletsService.findByUserId(userId);
     if (!wallet) {
       throw new NotFoundException('Carteira não encontrada');
+    }
+
+    const pendingCount = await this.prisma.walletDeposit.count({
+      where: { walletId: wallet.id, status: 'PENDING' },
+    });
+    if (pendingCount >= MAX_PENDING_DEPOSITS_PER_WALLET) {
+      throw new ConflictException(
+        'Existem depósitos pendentes demais nesta carteira; conclua ou aguarde a expiração antes de criar outro',
+      );
     }
 
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
@@ -132,7 +151,25 @@ export class DepositsService {
       if (updated.count === 1) {
         await tx.wallet.update({
           where: { id: walletId },
-          data: { balance: { increment: amount } },
+          // `version` é incrementado junto com o saldo para manter o
+          // invariante do lock otimista: toda mutação de saldo mexe na
+          // versão. Sem isso, um depósito confirmado no meio de uma
+          // transferência mudaria o saldo sem que o `where: { version }`
+          // da transferência percebesse.
+          data: { balance: { increment: amount }, version: { increment: 1 } },
+        });
+
+        // Lançamento no livro-razão, na MESMA transação SQL do crédito —
+        // é o que mantém `saldo == soma dos lançamentos`. Antes disso o
+        // depósito creditava a carteira sem deixar rastro no razão, e o
+        // extrato precisava mesclar duas fontes em memória para disfarçar.
+        await tx.ledgerEntry.create({
+          data: {
+            walletId,
+            depositId,
+            direction: 'CREDIT',
+            amount,
+          },
         });
       }
 

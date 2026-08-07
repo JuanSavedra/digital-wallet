@@ -8,6 +8,7 @@ import type { AuthTokens } from '../src/auth/interfaces/token-payload.interface'
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RedisService } from '../src/cache/redis.service';
 import { configureApp } from '../src/setup-app';
+import { deleteLedgerEntries } from './utils/ledger-cleanup';
 import { poll } from './utils/poll';
 
 /**
@@ -57,9 +58,7 @@ describe('Wallet balance/statement cache (e2e, infra real)', () => {
     await prisma.outboxEvent.deleteMany({
       where: { aggregateId: { in: transactionIds } },
     });
-    await prisma.ledgerEntry.deleteMany({
-      where: { walletId: { in: walletIds } },
-    });
+    await deleteLedgerEntries(prisma, { walletId: { in: walletIds } });
     await prisma.transaction.deleteMany({
       where: { originWalletId: { in: walletIds } },
     });

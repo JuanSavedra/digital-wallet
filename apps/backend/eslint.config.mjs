@@ -6,7 +6,10 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    // `dist`/`coverage` são saída de build: o parser com `projectService`
+    // falha neles porque não estão no tsconfig, e lintar código gerado não
+    // diz nada. Só aparece quando `npm run build` roda antes do lint.
+    ignores: ['eslint.config.mjs', 'dist/**', 'coverage/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

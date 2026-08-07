@@ -1,8 +1,16 @@
-import { Controller, Get, Header, VERSION_NEUTRAL } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  UseGuards,
+  VERSION_NEUTRAL,
+} from '@nestjs/common';
+import { MetricsTokenGuard } from './metrics-token.guard';
 import { MetricsService } from './metrics.service';
 
 // Sem versionamento de URI (fica em /api/metrics, não /api/v1/metrics) —
 // scrapers do Prometheus configuram um path fixo, não um por versão de API.
+@UseGuards(MetricsTokenGuard)
 @Controller({ path: 'metrics', version: VERSION_NEUTRAL })
 export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}

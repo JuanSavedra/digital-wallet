@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminGuard } from '../auth/guards/admin.guard';
 import { WalletsModule } from '../wallets/wallets.module';
 import { AdminController } from './admin.controller';
 import { DlqMetricsPoller } from './dlq-metrics.poller';
@@ -11,6 +12,7 @@ import { TransactionEventsHandler } from './transaction-events.handler';
   imports: [WalletsModule],
   controllers: [AdminController],
   providers: [
+    AdminGuard,
     RabbitMqService,
     TransactionEventsConsumer,
     TransactionEventsHandler,

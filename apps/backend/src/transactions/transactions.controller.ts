@@ -7,10 +7,12 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { isUUID } from 'class-validator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { RequestUser } from '../auth/decorators/current-user.decorator';
@@ -23,12 +25,18 @@ const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
 
 @ApiTags('transactions')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+// Rate limit por rota (nunca global — como APP_GUARD isso já quebrou os
+// testes que criam muitos usuários). O teto de transferências é o ponto
+// mais sensível: sem ele, uma conta comprometida pode ser esvaziada em
+// centenas de transferências pequenas antes de qualquer alerta, e cada
+// chamada ainda segura dois locks distribuídos de carteira.
+@UseGuards(JwtAuthGuard, ThrottlerGuard)
 @Controller('transactions')
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 
   @ApiHeader({ name: 'Idempotency-Key', required: true })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   @Post('transfer')
   async transfer(
@@ -51,7 +59,10 @@ export class TransactionsController {
   }
 
   @Get(':id')
-  async findOne(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  async findOne(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const transaction = await this.transactionsService.findByIdForUser(
       id,
       user.userId,

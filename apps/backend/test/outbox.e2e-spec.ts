@@ -10,6 +10,7 @@ import { AppModule } from '../src/app.module';
 import { WALLET_EVENTS_EXCHANGE } from '../src/messaging/constants';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { configureApp } from '../src/setup-app';
+import { deleteLedgerEntries } from './utils/ledger-cleanup';
 import { poll } from './utils/poll';
 
 /**
@@ -84,9 +85,7 @@ describe('Outbox relay (e2e, infra real)', () => {
     await prisma.outboxEvent.deleteMany({
       where: { aggregateId: { in: transactionIds } },
     });
-    await prisma.ledgerEntry.deleteMany({
-      where: { walletId: { in: walletIds } },
-    });
+    await deleteLedgerEntries(prisma, { walletId: { in: walletIds } });
     await prisma.transaction.deleteMany({
       where: { originWalletId: { in: walletIds } },
     });

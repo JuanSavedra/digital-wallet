@@ -1,6 +1,9 @@
-export interface AuthTokens {
+/**
+ * Só o access token volta no corpo. O refresh token não passa mais pelo
+ * JavaScript: ele vive num cookie httpOnly setado pelo backend (Escopo 13).
+ */
+export interface AuthSession {
   accessToken: string;
-  refreshToken: string;
 }
 
 export interface RegisteredUser {
@@ -23,6 +26,7 @@ export interface StatementEntry {
   id: string;
   source: StatementEntrySource;
   transactionId: string | null;
+  depositId: string | null;
   direction: LedgerDirection;
   amount: string;
   createdAt: string;

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
-import type { AuthTokens } from '../src/auth/interfaces/token-payload.interface';
+import { REFRESH_COOKIE_NAME } from '../src/auth/refresh-cookie';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { configureApp } from '../src/setup-app';
 
@@ -68,15 +68,18 @@ describe('Auth flow (e2e, infra real)', () => {
     expect(response.status).toBe(401);
   });
 
-  it('logs in and returns an access/refresh token pair', async () => {
+  it('logs in returning the access token in the body and the refresh token only in a httpOnly cookie', async () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email, password });
 
-    const body = response.body as AuthTokens;
     expect(response.status).toBe(200);
-    expect(body.accessToken).toEqual(expect.any(String));
-    expect(body.refreshToken).toEqual(expect.any(String));
+    expect(response.body).toEqual({ accessToken: expect.any(String) });
+
+    const refreshCookie = (
+      response.headers['set-cookie'] as unknown as string[]
+    ).find((cookie) => cookie.startsWith(`${REFRESH_COOKIE_NAME}=`));
+    expect(refreshCookie).toContain('HttpOnly');
   });
 
   it('rejects /users/me without a token', async () => {
@@ -89,7 +92,8 @@ describe('Auth flow (e2e, infra real)', () => {
     const loginResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email, password });
-    const { accessToken, refreshToken } = loginResponse.body as AuthTokens;
+    const { accessToken } = loginResponse.body as { accessToken: string };
+    const cookies = loginResponse.headers['set-cookie'] as unknown as string[];
 
     const meResponse = await request(app.getHttpServer())
       .get('/api/v1/users/me')
@@ -97,26 +101,34 @@ describe('Auth flow (e2e, infra real)', () => {
     expect(meResponse.status).toBe(200);
     expect((meResponse.body as { email: string }).email).toBe(email);
 
+    // O refresh vai só com o cookie — o corpo não carrega mais o token.
     const refreshResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/refresh')
-      .send({ refreshToken });
+      .set('Cookie', cookies)
+      .send({});
     expect(refreshResponse.status).toBe(200);
-    const newRefreshToken = (refreshResponse.body as AuthTokens).refreshToken;
-    expect(newRefreshToken).not.toBe(refreshToken);
+    const rotatedCookies = refreshResponse.headers[
+      'set-cookie'
+    ] as unknown as string[];
+    expect(rotatedCookies[0]).not.toBe(cookies[0]);
 
+    // Rotação: o cookie antigo já não vale mais.
     const reusedOldTokenResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/refresh')
-      .send({ refreshToken });
+      .set('Cookie', cookies)
+      .send({});
     expect(reusedOldTokenResponse.status).toBe(401);
 
     const logoutResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/logout')
-      .send({ refreshToken: newRefreshToken });
+      .set('Cookie', rotatedCookies)
+      .send({});
     expect(logoutResponse.status).toBe(204);
 
     const refreshAfterLogoutResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/refresh')
-      .send({ refreshToken: newRefreshToken });
+      .set('Cookie', rotatedCookies)
+      .send({});
     expect(refreshAfterLogoutResponse.status).toBe(401);
   });
 });

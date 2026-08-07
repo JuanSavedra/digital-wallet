@@ -24,10 +24,15 @@ RUN npm ci --omit=dev
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/prisma ./prisma
-COPY package.json ./
+# `--chown` já entrega os arquivos ao usuário sem privilégio: a imagem do
+# node traz um usuário `node` (uid 1000) e rodar como root num container é
+# um degrau a menos para quem conseguir execução de código dentro dele.
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/prisma ./prisma
+COPY --chown=node:node package.json ./
+
+USER node
 
 EXPOSE 3000
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]

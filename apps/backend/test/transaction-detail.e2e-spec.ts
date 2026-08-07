@@ -8,6 +8,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { configureApp } from '../src/setup-app';
+import { deleteLedgerEntries } from './utils/ledger-cleanup';
 
 /**
  * Requer Postgres e Redis reais (`make up`). Cobre o item pendente do
@@ -55,9 +56,7 @@ describe('GET /transactions/:id (e2e, infra real)', () => {
     await prisma.outboxEvent.deleteMany({
       where: { aggregateId: { in: transactionIds } },
     });
-    await prisma.ledgerEntry.deleteMany({
-      where: { walletId: { in: walletIds } },
-    });
+    await deleteLedgerEntries(prisma, { walletId: { in: walletIds } });
     await prisma.transaction.deleteMany({
       where: { originWalletId: { in: walletIds } },
     });

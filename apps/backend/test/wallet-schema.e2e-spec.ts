@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { deleteLedgerEntries } from './utils/ledger-cleanup';
 
 /**
  * Requer Postgres real rodando (ex.: `make up`) — valida o schema em si
@@ -37,8 +38,8 @@ describe('Wallet/transaction schema (e2e, infra real)', () => {
   });
 
   afterAll(async () => {
-    await prisma.ledgerEntry.deleteMany({
-      where: { walletId: { in: [walletAId, walletBId] } },
+    await deleteLedgerEntries(prisma, {
+      walletId: { in: [walletAId, walletBId] },
     });
     await prisma.transaction.deleteMany({
       where: { originWalletId: { in: [walletAId, walletBId] } },

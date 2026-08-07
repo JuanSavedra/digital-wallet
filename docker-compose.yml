@@ -53,6 +53,13 @@ services:
     env_file:
       - .env
     environment:
+      # A imagem é buildada com NODE_ENV=production (dependências enxutas),
+      # mas ESTE stack é o ambiente de desenvolvimento local. Sem este
+      # override o boot falha de propósito: desde o Escopo 13, em produção os
+      # segredos de placeholder do .env.example são recusados na validação de
+      # ambiente. Num deploy de verdade, NÃO copie esta linha — mantenha
+      # production e gere segredos reais (`openssl rand -hex 32`).
+      NODE_ENV: development
       # Dentro da rede do compose, os serviços são resolvidos pelo nome do
       # serviço, não por "localhost" (que é o valor usado para dev local
       # fora de containers, no .env).

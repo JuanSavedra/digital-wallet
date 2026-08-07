@@ -14,16 +14,20 @@ async function bootstrap() {
 
   configureApp(app);
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Digital Wallet API')
-    .setDescription(
-      'API da carteira digital: contas, transferências e autenticação',
-    )
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, swaggerDocument);
+  // Swagger publica o mapa completo da API (rotas, DTOs, exemplos). Útil em
+  // dev, desnecessário em produção — desligado por padrão lá.
+  if (configService.get<boolean>('SWAGGER_ENABLED', true)) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Digital Wallet API')
+      .setDescription(
+        'API da carteira digital: contas, transferências e autenticação',
+      )
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, swaggerDocument);
+  }
 
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port);

@@ -17,6 +17,7 @@ describe('DepositsService', () => {
   let tx: {
     walletDeposit: Record<string, jest.Mock>;
     wallet: Record<string, jest.Mock>;
+    ledgerEntry: Record<string, jest.Mock>;
   };
 
   const wallet = { id: 'wallet-1', userId: 'user-1', balance: 5_000n };
@@ -39,6 +40,7 @@ describe('DepositsService', () => {
     tx = {
       walletDeposit: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
       wallet: { update: jest.fn() },
+      ledgerEntry: { create: jest.fn() },
     };
 
     prisma = {
@@ -46,6 +48,7 @@ describe('DepositsService', () => {
         create: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
       },
       $transaction: jest.fn((callback: (tx: unknown) => unknown) =>
         callback(tx),
@@ -221,7 +224,20 @@ describe('DepositsService', () => {
       });
       expect(tx.wallet.update).toHaveBeenCalledWith({
         where: { id: wallet.id },
-        data: { balance: { increment: pendingDeposit.amount } },
+        data: {
+          balance: { increment: pendingDeposit.amount },
+          version: { increment: 1 },
+        },
+      });
+      // O crédito e o lançamento no razão saem da mesma transação SQL: é o
+      // que sustenta o invariante saldo == soma dos lançamentos.
+      expect(tx.ledgerEntry.create).toHaveBeenCalledWith({
+        data: {
+          walletId: wallet.id,
+          depositId: pendingDeposit.id,
+          direction: 'CREDIT',
+          amount: pendingDeposit.amount,
+        },
       });
       expect(walletsService.invalidateWalletCaches).toHaveBeenCalledWith(
         wallet.id,

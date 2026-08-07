@@ -1,9 +1,13 @@
 import { createContext, useContext } from 'react';
-import type { AuthTokens } from '../api/types';
+import type { AuthSession } from '../api/types';
+import type { AuthStatus } from '../lib/token-store';
 
 export interface AuthContextValue {
+  /** `unknown` enquanto o refresh de bootstrap não respondeu — telas
+   * protegidas devem esperar em vez de redirecionar para /login. */
+  status: AuthStatus;
   isAuthenticated: boolean;
-  login: (tokens: AuthTokens) => void;
+  login: (session: AuthSession) => void;
   logout: () => Promise<void>;
 }
 

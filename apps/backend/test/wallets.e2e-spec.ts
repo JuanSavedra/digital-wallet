@@ -13,6 +13,7 @@ import {
 } from '../src/payments/abacatepay.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { configureApp } from '../src/setup-app';
+import { deleteLedgerEntries } from './utils/ledger-cleanup';
 import { poll } from './utils/poll';
 
 /**
@@ -106,6 +107,9 @@ describe('Wallets ownership (e2e, infra real)', () => {
         select: { id: true },
       });
       const walletIds = wallets.map((w) => w.id);
+      // Os lançamentos saem antes dos depósitos: depósito pago agora tem
+      // uma LedgerEntry apontando para ele (FK RESTRICT).
+      await deleteLedgerEntries(prisma, { walletId: { in: walletIds } });
       await prisma.walletDeposit.deleteMany({
         where: { walletId: { in: walletIds } },
       });

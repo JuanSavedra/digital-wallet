@@ -24,7 +24,15 @@ import { envValidationSchema } from './config/env.validation';
       validationOptions: { abortEarly: false },
     }),
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 60 }],
+      // Escotilha só para os testes e2e, que registram dezenas de usuários e
+      // criam depósitos em sequência — com os limites reais ligados, as
+      // suítes falhariam por 429 em vez de pelo que estão testando. Nunca é
+      // ligada em runtime real: o `.env.example` não traz a variável e o
+      // padrão (ausente) mantém o rate limit ativo.
+      skipIf: () => process.env.RATE_LIMIT_DISABLED === 'true',
+    }),
     PrismaModule,
     CacheModule,
     MetricsModule,

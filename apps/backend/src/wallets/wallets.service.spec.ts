@@ -188,44 +188,49 @@ describe('WalletsService', () => {
       );
     });
 
-    it('merges paid deposits alongside ledger entries, most recent first', async () => {
+    it('classifies each entry by its source and paginates in the database', async () => {
       redisService.get.mockResolvedValue(null);
       prisma.ledgerEntry.findMany.mockResolvedValue([
         {
-          id: 'entry-1',
+          id: 'entry-deposit',
+          transactionId: null,
+          depositId: 'deposit-1',
+          direction: 'CREDIT',
+          amount: 2_000n,
+          createdAt: new Date('2026-01-01T11:00:00Z'),
+        },
+        {
+          id: 'entry-transfer',
           transactionId: 'tx-1',
+          depositId: null,
           direction: 'DEBIT',
           amount: 500n,
           createdAt: new Date('2026-01-01T10:00:00Z'),
         },
       ]);
-      prisma.walletDeposit.findMany.mockResolvedValue([
-        {
-          id: 'deposit-1',
-          amount: 2_000n,
-          createdAt: new Date('2026-01-01T09:00:00Z'),
-          paidAt: new Date('2026-01-01T11:00:00Z'),
-        },
-      ]);
 
-      const entries = await walletsService.getStatement('wallet-1', 1);
+      const entries = await walletsService.getStatement('wallet-1', 3);
 
-      expect(prisma.walletDeposit.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { walletId: 'wallet-1', status: 'PAID' },
-        }),
+      // A paginação acontece no Postgres, não em memória: sem isso, uma
+      // página alta viraria um `take` gigante varrendo a tabela inteira.
+      expect(prisma.ledgerEntry.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 40, take: 20 }),
       );
-      // O depósito foi pago DEPOIS do lançamento do ledger (paidAt mais
-      // recente), então aparece primeiro.
       expect(entries).toEqual([
         expect.objectContaining({
-          id: 'deposit-1',
+          id: 'entry-deposit',
           source: 'deposit',
+          depositId: 'deposit-1',
           transactionId: null,
           direction: 'CREDIT',
           amount: '2000',
         }),
-        expect.objectContaining({ id: 'entry-1', source: 'transfer' }),
+        expect.objectContaining({
+          id: 'entry-transfer',
+          source: 'transfer',
+          transactionId: 'tx-1',
+          depositId: null,
+        }),
       ]);
     });
   });
