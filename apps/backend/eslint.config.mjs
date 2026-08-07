@@ -32,4 +32,14 @@ export default tseslint.config(
       "prettier/prettier": ["error", { endOfLine: "auto" }],
     },
   },
+  {
+    // expect(mock.method).toHaveBeenCalledWith(...) and expect.any(...) /
+    // expect.objectContaining(...) are standard Jest patterns that
+    // intentionally pass unbound method references / untyped matchers.
+    files: ['**/*.spec.ts', 'test/**/*.ts'],
+    rules: {
+      '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+    },
+  },
 );
