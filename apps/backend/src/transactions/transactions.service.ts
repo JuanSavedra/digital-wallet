@@ -5,6 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Transaction } from '@prisma/client';
+import {
+  LockAcquisitionError,
+  RedisLockService,
+} from '../cache/redis-lock.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { TransferDto } from './dto/transfer.dto';
@@ -14,12 +18,15 @@ import {
 } from './errors/transfer.errors';
 
 const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
+const WALLET_LOCK_TTL_MS = 5_000;
+const walletLockKey = (walletId: string) => `lock:wallet:${walletId}`;
 
 @Injectable()
 export class TransactionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletsService: WalletsService,
+    private readonly redisLockService: RedisLockService,
   ) {}
 
   async transfer(
@@ -47,9 +54,44 @@ export class TransactionsService {
 
     const amount = BigInt(dto.amount);
 
+    try {
+      // Lock distribuído por carteira, adquirido em ordem determinística
+      // (ver RedisLockService) para não gerar deadlock entre transferências
+      // concorrentes em sentidos opostos (A→B e B→A ao mesmo tempo). Isso
+      // reduz a contenção sobre o lock otimista (coluna `version`, Escopo
+      // 5) que continua sendo a garantia de correção de última instância —
+      // mesmo que o lock do Redis expire ou falhe, o banco não deixa dois
+      // débitos concorrentes corromperem o saldo.
+      return await this.redisLockService.withLock(
+        [walletLockKey(originWallet.id), walletLockKey(destinationWallet.id)],
+        WALLET_LOCK_TTL_MS,
+        () =>
+          this.executeTransfer(
+            originWallet.id,
+            destinationWallet.id,
+            amount,
+            idempotencyKey,
+          ),
+      );
+    } catch (error) {
+      if (error instanceof LockAcquisitionError) {
+        throw new ConflictException(
+          'Não foi possível processar a transferência agora, tente novamente',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async executeTransfer(
+    originWalletId: string,
+    destinationWalletId: string,
+    amount: bigint,
+    idempotencyKey: string,
+  ): Promise<Transaction> {
     const pendingTransaction = await this.createPendingTransaction(
-      originWallet.id,
-      destinationWallet.id,
+      originWalletId,
+      destinationWalletId,
       amount,
       idempotencyKey,
     );
@@ -62,7 +104,7 @@ export class TransactionsService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const freshOrigin = await tx.wallet.findUniqueOrThrow({
-          where: { id: originWallet.id },
+          where: { id: originWalletId },
         });
 
         if (freshOrigin.balance < amount) {
@@ -70,7 +112,7 @@ export class TransactionsService {
         }
 
         const debit = await tx.wallet.updateMany({
-          where: { id: originWallet.id, version: freshOrigin.version },
+          where: { id: originWalletId, version: freshOrigin.version },
           data: { balance: { decrement: amount }, version: { increment: 1 } },
         });
         if (debit.count !== 1) {
@@ -78,11 +120,11 @@ export class TransactionsService {
         }
 
         const freshDestination = await tx.wallet.findUniqueOrThrow({
-          where: { id: destinationWallet.id },
+          where: { id: destinationWalletId },
         });
         const credit = await tx.wallet.updateMany({
           where: {
-            id: destinationWallet.id,
+            id: destinationWalletId,
             version: freshDestination.version,
           },
           data: { balance: { increment: amount }, version: { increment: 1 } },
@@ -94,13 +136,13 @@ export class TransactionsService {
         await tx.ledgerEntry.createMany({
           data: [
             {
-              walletId: originWallet.id,
+              walletId: originWalletId,
               transactionId: transaction.id,
               direction: 'DEBIT',
               amount,
             },
             {
-              walletId: destinationWallet.id,
+              walletId: destinationWalletId,
               transactionId: transaction.id,
               direction: 'CREDIT',
               amount,

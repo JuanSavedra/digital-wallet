@@ -4,6 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import {
+  LockAcquisitionError,
+  RedisLockService,
+} from '../cache/redis-lock.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { TransactionsService } from './transactions.service';
@@ -18,6 +22,7 @@ function uniqueConstraintError() {
 describe('TransactionsService', () => {
   let service: TransactionsService;
   let walletsService: jest.Mocked<WalletsService>;
+  let redisLockService: jest.Mocked<RedisLockService>;
   let prisma: {
     transaction: Record<string, jest.Mock>;
     $transaction: jest.Mock;
@@ -66,9 +71,16 @@ describe('TransactionsService', () => {
       findById: jest.fn(),
     } as unknown as jest.Mocked<WalletsService>;
 
+    redisLockService = {
+      withLock: jest.fn((_keys: string[], _ttl: number, fn: () => unknown) =>
+        fn(),
+      ),
+    } as unknown as jest.Mocked<RedisLockService>;
+
     service = new TransactionsService(
       prisma as unknown as PrismaService,
       walletsService,
+      redisLockService,
     );
   });
 
@@ -116,6 +128,27 @@ describe('TransactionsService', () => {
       ],
     });
     expect(result).toEqual({ id: 'tx-1', status: 'COMPLETED' });
+    // A ordenação determinística das chaves acontece dentro do
+    // RedisLockService (testado em redis-lock.service.spec.ts); aqui só
+    // importa que o service passe as duas chaves de carteira envolvidas.
+    expect(redisLockService.withLock).toHaveBeenCalledWith(
+      ['lock:wallet:wallet-origin', 'lock:wallet:wallet-destination'],
+      5_000,
+      expect.any(Function),
+    );
+  });
+
+  it('rejects with 409 when the wallet lock cannot be acquired', async () => {
+    walletsService.findByUserId.mockResolvedValue(origin as never);
+    walletsService.findById.mockResolvedValue(destination as never);
+    redisLockService.withLock.mockRejectedValue(
+      new LockAcquisitionError('lock:wallet:wallet-origin'),
+    );
+
+    await expect(
+      service.transfer(origin.userId, dto, idempotencyKey),
+    ).rejects.toThrow(ConflictException);
+    expect(prisma.transaction.create).not.toHaveBeenCalled();
   });
 
   it('throws NotFoundException when the requester has no wallet', async () => {
