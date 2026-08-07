@@ -120,8 +120,18 @@ export class TransactionEventsConsumer implements OnModuleInit {
     } catch (error) {
       // Libera a chave: se não fosse isso, a próxima tentativa (que é uma
       // mensagem nova, redirecionada da fila de retry) seria descartada
-      // como "duplicata" sem nunca chegar a tentar de novo de verdade.
-      await this.redisService.del(dedupKey);
+      // como "duplicata" sem nunca chegar a tentar de novo de verdade. Se o
+      // próprio Redis estiver indisponível nesse instante (ex. desligando
+      // durante o shutdown da aplicação), essa chamada não pode virar uma
+      // unhandled rejection — na pior das hipóteses a chave só expira pelo
+      // TTL normal e uma redelivery próxima é tratada como duplicata.
+      try {
+        await this.redisService.del(dedupKey);
+      } catch (delError) {
+        this.logger.error(
+          `Falha ao liberar a chave de dedupe do evento ${event.id}, seguindo mesmo assim: ${(delError as Error).message}`,
+        );
+      }
 
       if (retryCount >= MAX_RETRY_ATTEMPTS) {
         channel.sendToQueue(TRANSACTIONS_DLQ_QUEUE, msg.content, {

@@ -131,6 +131,27 @@ describe('TransactionEventsConsumer', () => {
     expect(channel.ack).toHaveBeenCalledWith(msg);
   });
 
+  it('still requeues the message even when releasing the dedupe key fails (e.g. Redis shutting down)', async () => {
+    redisService.setIfNotExists.mockResolvedValue(true);
+    handler.handle.mockRejectedValue(new Error('falha temporária'));
+    redisService.del.mockRejectedValue(new Error('Connection is closed.'));
+    const msg = makeMessage(
+      { id: 'evt-1', aggregateId: 'tx-1' },
+      { 'x-retry-count': 1 },
+    );
+
+    await expect(deliver(msg)).resolves.toBeUndefined();
+
+    expect(channel.sendToQueue).toHaveBeenCalledWith(
+      TRANSACTIONS_RETRY_QUEUE,
+      msg.content,
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-retry-count': 2 }),
+      }),
+    );
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
   it('requeues to the retry queue with an incremented count when below the limit', async () => {
     redisService.setIfNotExists.mockResolvedValue(true);
     handler.handle.mockRejectedValue(new Error('falha temporária'));
