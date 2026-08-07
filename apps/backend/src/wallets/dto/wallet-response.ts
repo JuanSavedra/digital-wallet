@@ -1,10 +1,10 @@
 import { Wallet } from '@prisma/client';
 
-export function toWalletResponse(wallet: Wallet) {
+export function toWalletResponse(wallet: Wallet, balanceOverride?: bigint) {
   return {
     id: wallet.id,
     userId: wallet.userId,
-    balance: wallet.balance.toString(),
+    balance: (balanceOverride ?? wallet.balance).toString(),
     createdAt: wallet.createdAt,
     updatedAt: wallet.updatedAt,
   };

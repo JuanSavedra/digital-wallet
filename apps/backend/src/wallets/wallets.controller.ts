@@ -3,12 +3,14 @@ import {
   Get,
   NotFoundException,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { RequestUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { StatementQueryDto } from './dto/statement-query.dto';
 import { toWalletResponse } from './dto/wallet-response';
 import { WalletOwnerGuard } from './guards/wallet-owner.guard';
 import { WalletsService } from './wallets.service';
@@ -26,7 +28,24 @@ export class WalletsController {
     if (!wallet) {
       throw new NotFoundException('Carteira não encontrada');
     }
-    return toWalletResponse(wallet);
+    const balance = await this.walletsService.getCachedBalance(wallet.id);
+    return toWalletResponse(wallet, balance);
+  }
+
+  @Get('me/statement')
+  async myStatement(
+    @CurrentUser() user: RequestUser,
+    @Query() query: StatementQueryDto,
+  ) {
+    const wallet = await this.walletsService.findByUserId(user.userId);
+    if (!wallet) {
+      throw new NotFoundException('Carteira não encontrada');
+    }
+    const entries = await this.walletsService.getStatement(
+      wallet.id,
+      query.page,
+    );
+    return { page: query.page, entries };
   }
 
   @UseGuards(WalletOwnerGuard)
@@ -36,6 +55,14 @@ export class WalletsController {
     if (!wallet) {
       throw new NotFoundException('Carteira não encontrada');
     }
-    return toWalletResponse(wallet);
+    const balance = await this.walletsService.getCachedBalance(wallet.id);
+    return toWalletResponse(wallet, balance);
+  }
+
+  @UseGuards(WalletOwnerGuard)
+  @Get(':id/statement')
+  async statement(@Param('id') id: string, @Query() query: StatementQueryDto) {
+    const entries = await this.walletsService.getStatement(id, query.page);
+    return { page: query.page, entries };
   }
 }

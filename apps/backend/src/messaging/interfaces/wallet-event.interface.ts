@@ -4,3 +4,11 @@ export interface WalletEventMessage {
   eventType: string;
   payload: unknown;
 }
+
+export interface TransactionCompletedPayload {
+  transactionId: string;
+  originWalletId: string;
+  destinationWalletId: string;
+  amount: string;
+  status: string;
+}
