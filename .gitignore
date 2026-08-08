@@ -17,6 +17,9 @@ dist-ssr
 
 TODO.md
 
+# Claude Code local config and installed skills (e.g. impeccable) — local tooling, not project source
+.claude/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
