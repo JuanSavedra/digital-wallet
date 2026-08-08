@@ -32,12 +32,19 @@ describe('Auth flow (e2e, infra real)', () => {
   });
 
   afterAll(async () => {
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (user) {
-      await prisma.wallet.deleteMany({ where: { userId: user.id } });
-      await prisma.user.delete({ where: { id: user.id } });
+    // Sempre fechar o app no finally: se a limpeza falhar antes de
+    // `app.close()`, os pollers do ScheduleModule (ex.: DlqMetricsPoller)
+    // nunca são parados e ficam disparando contra uma conexão morta —
+    // o processo do Jest trava esperando por eles indefinidamente.
+    try {
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (user) {
+        await prisma.wallet.deleteMany({ where: { userId: user.id } });
+        await prisma.user.delete({ where: { id: user.id } });
+      }
+    } finally {
+      await app.close();
     }
-    await app.close();
   });
 
   it('registers a new user', async () => {

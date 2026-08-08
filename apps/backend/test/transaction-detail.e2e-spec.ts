@@ -38,31 +38,38 @@ describe('GET /transactions/:id (e2e, infra real)', () => {
   });
 
   afterAll(async () => {
-    const users = await prisma.user.findMany({
-      where: { email: { in: allEmails } },
-      select: { id: true },
-    });
-    const userIds = users.map((u) => u.id);
-    const wallets = await prisma.wallet.findMany({
-      where: { userId: { in: userIds } },
-      select: { id: true },
-    });
-    const walletIds = wallets.map((w) => w.id);
-    const transactions = await prisma.transaction.findMany({
-      where: { originWalletId: { in: walletIds } },
-      select: { id: true },
-    });
-    const transactionIds = transactions.map((t) => t.id);
-    await prisma.outboxEvent.deleteMany({
-      where: { aggregateId: { in: transactionIds } },
-    });
-    await deleteLedgerEntries(prisma, { walletId: { in: walletIds } });
-    await prisma.transaction.deleteMany({
-      where: { originWalletId: { in: walletIds } },
-    });
-    await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
-    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
-    await app.close();
+    // Sempre fechar o app no finally: se a limpeza falhar antes de
+    // `app.close()`, os pollers do ScheduleModule (ex.: DlqMetricsPoller)
+    // nunca são parados e ficam disparando contra uma conexão morta —
+    // o processo do Jest trava esperando por eles indefinidamente.
+    try {
+      const users = await prisma.user.findMany({
+        where: { email: { in: allEmails } },
+        select: { id: true },
+      });
+      const userIds = users.map((u) => u.id);
+      const wallets = await prisma.wallet.findMany({
+        where: { userId: { in: userIds } },
+        select: { id: true },
+      });
+      const walletIds = wallets.map((w) => w.id);
+      const transactions = await prisma.transaction.findMany({
+        where: { originWalletId: { in: walletIds } },
+        select: { id: true },
+      });
+      const transactionIds = transactions.map((t) => t.id);
+      await prisma.outboxEvent.deleteMany({
+        where: { aggregateId: { in: transactionIds } },
+      });
+      await deleteLedgerEntries(prisma, { walletId: { in: walletIds } });
+      await prisma.transaction.deleteMany({
+        where: { originWalletId: { in: walletIds } },
+      });
+      await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    } finally {
+      await app.close();
+    }
   }, 15_000);
 
   async function createFundedUser(initialBalanceCents: bigint) {

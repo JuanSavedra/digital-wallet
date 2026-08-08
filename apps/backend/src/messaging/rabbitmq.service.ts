@@ -25,11 +25,35 @@ export class RabbitMqService implements OnModuleDestroy {
     );
   }
 
+  /**
+   * Fechar sem deixar escapar exceção é intencional: `NestApplicationContext
+   * .close()` chama `onModuleDestroy` de todos os providers num loop
+   * sequencial e só segue para o hook que limpa os `@Interval`/`@Cron`
+   * (`ScheduleModule`, usado por `DlqMetricsPoller`/`OutboxRelayService`)
+   * depois que esse loop inteiro termina. Se a conexão já caiu sozinha
+   * (rede instável, container de RabbitMQ reiniciado) e `channel.close()`
+   * ou `connection.close()` lançar, o loop aborta e aqueles intervals nunca
+   * são limpos — eles continuam disparando pra sempre contra uma conexão
+   * morta, deixando o processo (e o `app.close()` de qualquer teste e2e)
+   * pendurado.
+   */
   async onModuleDestroy(): Promise<void> {
     const channel = await this.channelPromise;
     const connection = await this.connectionPromise;
-    await channel.close();
-    await connection.close();
+    try {
+      await channel.close();
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao fechar o canal do RabbitMQ (provavelmente já estava fechado): ${(error as Error).message}`,
+      );
+    }
+    try {
+      await connection.close();
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao fechar a conexão com o RabbitMQ (provavelmente já estava fechada): ${(error as Error).message}`,
+      );
+    }
   }
 
   /** Permite que outros serviços (consumer, DLQ) abram seus próprios
