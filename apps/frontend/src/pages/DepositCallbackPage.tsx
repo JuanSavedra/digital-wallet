@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { getDeposit } from '../api/deposits';
+import { ErrorMessage } from '../components/ErrorMessage';
 import { getErrorMessage } from '../lib/error-message';
 
 const POLL_INTERVAL_MS = 2000;
@@ -39,7 +40,7 @@ export function DepositCallbackPage() {
       )}
       {depositId !== null && isLoading && <p>Confirmando pagamento...</p>}
       {depositId !== null && isError && (
-        <p className="form-error">{getErrorMessage(error)}</p>
+        <ErrorMessage>{getErrorMessage(error)}</ErrorMessage>
       )}
       {data?.status === 'PAID' && (
         <p className="deposit-success">
@@ -51,7 +52,7 @@ export function DepositCallbackPage() {
         <p>Confirmando pagamento com a AbacatePay...</p>
       )}
       {(data?.status === 'EXPIRED' || data?.status === 'CANCELLED') && (
-        <p className="form-error">O pagamento não foi concluído.</p>
+        <ErrorMessage>O pagamento não foi concluído.</ErrorMessage>
       )}
     </section>
   );

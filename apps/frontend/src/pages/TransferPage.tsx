@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { transfer } from '../api/transactions';
 import { lookupWalletByEmail } from '../api/wallets';
+import { ErrorMessage } from '../components/ErrorMessage';
 import { getErrorMessage } from '../lib/error-message';
 import { parseReaisToCents } from '../lib/money';
 
@@ -83,9 +84,9 @@ export function TransferPage() {
           />
         </label>
         {(validationError ?? mutation.isError) && (
-          <p className="form-error">
+          <ErrorMessage>
             {validationError ?? getErrorMessage(mutation.error)}
-          </p>
+          </ErrorMessage>
         )}
         <button type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? 'Enviando...' : 'Transferir'}

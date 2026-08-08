@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { createDeposit, getDeposit } from '../api/deposits';
 import { getMyWallet } from '../api/wallets';
+import { ErrorMessage } from '../components/ErrorMessage';
 import { getErrorMessage } from '../lib/error-message';
 import { centsToBRL, parseReaisToCents } from '../lib/money';
 
@@ -82,7 +83,7 @@ export function DashboardPage() {
   }
 
   if (isLoading) return <p>Carregando saldo...</p>;
-  if (isError) return <p className="form-error">{getErrorMessage(error)}</p>;
+  if (isError) return <ErrorMessage>{getErrorMessage(error)}</ErrorMessage>;
   if (!data) return null;
 
   return (
@@ -126,9 +127,9 @@ export function DashboardPage() {
               />
             </label>
             {(depositError ?? createDepositMutation.isError) && (
-              <p className="form-error">
+              <ErrorMessage>
                 {depositError ?? getErrorMessage(createDepositMutation.error)}
-              </p>
+              </ErrorMessage>
             )}
             <button type="submit" disabled={createDepositMutation.isPending}>
               {createDepositMutation.isPending
@@ -155,11 +156,11 @@ export function DashboardPage() {
               </p>
             )}
             {(deposit.status === 'EXPIRED' || deposit.status === 'CANCELLED') && (
-              <p className="form-error">
+              <ErrorMessage>
                 O pagamento não foi concluído (
                 {deposit.status === 'EXPIRED' ? 'expirado' : 'cancelado'}
                 ). Tente novamente.
-              </p>
+              </ErrorMessage>
             )}
             <button type="button" onClick={handleReset}>
               {deposit.status === 'PENDING' ? 'Cancelar' : 'Fazer novo depósito'}

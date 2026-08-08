@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { getTransaction } from '../api/transactions';
+import { ErrorMessage } from '../components/ErrorMessage';
 import { centsToBRL } from '../lib/money';
 import { getErrorMessage } from '../lib/error-message';
 import type { TransactionStatus } from '../api/types';
@@ -26,7 +27,7 @@ export function TransactionDetailPage() {
   });
 
   if (isLoading) return <p>Carregando...</p>;
-  if (isError) return <p className="form-error">{getErrorMessage(error)}</p>;
+  if (isError) return <ErrorMessage>{getErrorMessage(error)}</ErrorMessage>;
   if (!data) return null;
 
   return (
@@ -38,7 +39,7 @@ export function TransactionDetailPage() {
           {STATUS_LABEL[data.status]}
         </dd>
         <dt>Valor</dt>
-        <dd>{centsToBRL(data.amount)}</dd>
+        <dd className="figure">{centsToBRL(data.amount)}</dd>
         <dt>Origem</dt>
         <dd>
           <code>{data.originWalletId}</code>

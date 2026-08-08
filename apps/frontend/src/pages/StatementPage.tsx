@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getMyStatement } from '../api/wallets';
+import { ErrorMessage } from '../components/ErrorMessage';
 import { centsToBRL } from '../lib/money';
 import { getErrorMessage } from '../lib/error-message';
 
@@ -18,31 +19,55 @@ export function StatementPage() {
     <section>
       <h1>Extrato</h1>
       {isLoading && <p>Carregando...</p>}
-      {isError && <p className="form-error">{getErrorMessage(error)}</p>}
+      {isError && <ErrorMessage>{getErrorMessage(error)}</ErrorMessage>}
       {data && (
         <>
           {data.entries.length === 0 ? (
             <p>Nenhuma movimentação nesta página.</p>
           ) : (
             <ul className="statement-list">
-              {data.entries.map((entry) => (
-                <li key={entry.id}>
-                  <span
-                    className={`direction ${entry.direction.toLowerCase()}`}
-                  >
-                    {entry.direction === 'DEBIT' ? '-' : '+'}
-                    {centsToBRL(entry.amount)}
-                  </span>
-                  <span>{new Date(entry.createdAt).toLocaleString('pt-BR')}</span>
-                  {entry.source === 'deposit' ? (
-                    <span>Depósito</span>
-                  ) : (
-                    <Link to={`/transactions/${entry.transactionId}`}>
-                      ver transação
-                    </Link>
-                  )}
-                </li>
-              ))}
+              {data.entries.map((entry) => {
+                const isDebit = entry.direction === 'DEBIT';
+                return (
+                  <li key={entry.id}>
+                    <span
+                      className={`direction ${entry.direction.toLowerCase()}`}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        {isDebit ? (
+                          <path d="M12 5v14M6 13l6 6 6-6" />
+                        ) : (
+                          <path d="M12 19V5M6 11l6-6 6 6" />
+                        )}
+                      </svg>
+                      {isDebit ? '-' : '+'}
+                      {centsToBRL(entry.amount)}
+                    </span>
+                    <span className="statement-entry-meta">
+                      <time>
+                        {new Date(entry.createdAt).toLocaleString('pt-BR')}
+                      </time>
+                      {entry.source === 'deposit' ? (
+                        <span>Depósito</span>
+                      ) : (
+                        <Link to={`/transactions/${entry.transactionId}`}>
+                          ver transação
+                        </Link>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           )}
           <div className="pagination">

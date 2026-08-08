@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { registerUser } from '../api/auth';
+import { ErrorMessage } from '../components/ErrorMessage';
 import { getErrorMessage } from '../lib/error-message';
 
 export function RegisterPage() {
@@ -50,7 +51,7 @@ export function RegisterPage() {
           />
         </label>
         {mutation.isError && (
-          <p className="form-error">{getErrorMessage(mutation.error)}</p>
+          <ErrorMessage>{getErrorMessage(mutation.error)}</ErrorMessage>
         )}
         <button type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? 'Criando...' : 'Criar conta'}

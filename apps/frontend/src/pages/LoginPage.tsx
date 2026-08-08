@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { loginUser } from '../api/auth';
+import { ErrorMessage } from '../components/ErrorMessage';
 import { useAuth } from '../context/auth-context';
 import { getErrorMessage } from '../lib/error-message';
 
@@ -52,7 +53,7 @@ export function LoginPage() {
           />
         </label>
         {mutation.isError && (
-          <p className="form-error">{getErrorMessage(mutation.error)}</p>
+          <ErrorMessage>{getErrorMessage(mutation.error)}</ErrorMessage>
         )}
         <button type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? 'Entrando...' : 'Entrar'}
