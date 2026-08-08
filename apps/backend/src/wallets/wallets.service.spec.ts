@@ -146,21 +146,24 @@ describe('WalletsService', () => {
 
   describe('getStatement', () => {
     it('returns the cached page without hitting the database on a hit', async () => {
-      const cachedEntries = [
-        {
-          id: 'entry-1',
-          source: 'transfer',
-          transactionId: 'tx-1',
-          direction: 'DEBIT',
-          amount: '500',
-          createdAt: new Date().toISOString(),
-        },
-      ];
-      redisService.get.mockResolvedValue(JSON.stringify(cachedEntries));
+      const cachedPage = {
+        entries: [
+          {
+            id: 'entry-1',
+            source: 'transfer',
+            transactionId: 'tx-1',
+            direction: 'DEBIT',
+            amount: '500',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        hasMore: false,
+      };
+      redisService.get.mockResolvedValue(JSON.stringify(cachedPage));
 
-      const entries = await walletsService.getStatement('wallet-1', 1);
+      const result = await walletsService.getStatement('wallet-1', 1);
 
-      expect(entries).toEqual(cachedEntries);
+      expect(result).toEqual(cachedPage);
       expect(prisma.ledgerEntry.findMany).not.toHaveBeenCalled();
     });
 
@@ -176,9 +179,10 @@ describe('WalletsService', () => {
         },
       ]);
 
-      const entries = await walletsService.getStatement('wallet-1', 1);
+      const result = await walletsService.getStatement('wallet-1', 1);
 
-      expect(entries).toEqual([
+      expect(result.hasMore).toBe(false);
+      expect(result.entries).toEqual([
         expect.objectContaining({ id: 'entry-1', amount: '500' }),
       ]);
       expect(redisService.set).toHaveBeenCalledWith(
@@ -209,14 +213,17 @@ describe('WalletsService', () => {
         },
       ]);
 
-      const entries = await walletsService.getStatement('wallet-1', 3);
+      const result = await walletsService.getStatement('wallet-1', 3);
 
       // A paginação acontece no Postgres, não em memória: sem isso, uma
       // página alta viraria um `take` gigante varrendo a tabela inteira.
+      // `take` pede um item a mais que STATEMENT_PAGE_SIZE (5) — é esse
+      // extra que decide `hasMore` sem precisar de um `count()` separado.
       expect(prisma.ledgerEntry.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 40, take: 20 }),
+        expect.objectContaining({ skip: 10, take: 6 }),
       );
-      expect(entries).toEqual([
+      expect(result.hasMore).toBe(false);
+      expect(result.entries).toEqual([
         expect.objectContaining({
           id: 'entry-deposit',
           source: 'deposit',
@@ -232,6 +239,25 @@ describe('WalletsService', () => {
           depositId: null,
         }),
       ]);
+    });
+
+    it('reports hasMore when the page turns up the lookahead extra row', async () => {
+      redisService.get.mockResolvedValue(null);
+      prisma.ledgerEntry.findMany.mockResolvedValue(
+        Array.from({ length: 6 }, (_, i) => ({
+          id: `entry-${i}`,
+          transactionId: `tx-${i}`,
+          depositId: null,
+          direction: 'DEBIT',
+          amount: 100n,
+          createdAt: new Date('2026-01-01'),
+        })),
+      );
+
+      const result = await walletsService.getStatement('wallet-1', 1);
+
+      expect(result.hasMore).toBe(true);
+      expect(result.entries).toHaveLength(5);
     });
   });
 

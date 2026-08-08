@@ -35,6 +35,7 @@ export interface StatementEntry {
 export interface StatementResponse {
   page: number;
   entries: StatementEntry[];
+  hasMore: boolean;
 }
 
 export type DepositStatus = 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';

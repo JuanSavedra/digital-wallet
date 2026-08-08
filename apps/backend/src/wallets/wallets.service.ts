@@ -9,9 +9,14 @@ import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StatementEntry } from './dto/statement-entry';
 
+export interface StatementPage {
+  entries: StatementEntry[];
+  hasMore: boolean;
+}
+
 const BALANCE_CACHE_TTL_SECONDS = 30;
 const STATEMENT_CACHE_TTL_SECONDS = 60;
-export const STATEMENT_PAGE_SIZE = 20;
+export const STATEMENT_PAGE_SIZE = 5;
 
 const balanceCacheKey = (walletId: string) => `wallet:balance:${walletId}`;
 const statementCacheKey = (walletId: string, page: number) =>
@@ -85,42 +90,48 @@ export class WalletsService {
    *
    * Antes do Escopo 13 isso mesclava duas fontes (ledger + depósitos pagos)
    * em memória, porque depósitos não geravam lançamento. Agora que geram
-   * (`DepositsService.confirmPaid`), o razão é a única fonte — o que além de
-   * simplificar corrige a paginação (o `skip`/`take` acontece no Postgres) e
-   * elimina o `take: skip + pageSize` que fazia páginas altas varrerem a
-   * tabela inteira.
+   * (`DepositsService.confirmPaid`), o razão é a única fonte — o `skip`/`take`
+   * acontece direto no Postgres.
+   *
+   * `hasMore` vem de buscar um item a mais do que `STATEMENT_PAGE_SIZE`: se
+   * ele existir, sobra pra próxima página e é descartado antes de responder.
+   * Isso evita uma segunda query de `count()` só pra saber se a página
+   * seguinte existe — e é o que permite o frontend desabilitar "Próxima"
+   * sem precisar navegar até uma página vazia pra descobrir.
    */
-  async getStatement(
-    walletId: string,
-    page: number,
-  ): Promise<StatementEntry[]> {
+  async getStatement(walletId: string, page: number): Promise<StatementPage> {
     const cacheKey = statementCacheKey(walletId, page);
     const cached = await this.redisService.get(cacheKey);
     if (cached !== null) {
       this.metricsService.recordCacheHit('wallet_statement');
-      return JSON.parse(cached) as StatementEntry[];
+      return JSON.parse(cached) as StatementPage;
     }
     this.metricsService.recordCacheMiss('wallet_statement');
 
-    const entries = await this.prisma.ledgerEntry.findMany({
+    const rows = await this.prisma.ledgerEntry.findMany({
       where: { walletId },
       // Desempate por id mantém a ordem estável entre páginas quando dois
       // lançamentos compartilham o mesmo `createdAt` — o caso normal, já
       // que débito e crédito de uma transferência nascem juntos.
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (page - 1) * STATEMENT_PAGE_SIZE,
-      take: STATEMENT_PAGE_SIZE,
+      take: STATEMENT_PAGE_SIZE + 1,
     });
 
-    const statement: StatementEntry[] = entries.map((entry) => ({
-      id: entry.id,
-      source: entry.depositId ? 'deposit' : 'transfer',
-      transactionId: entry.transactionId,
-      depositId: entry.depositId,
-      direction: entry.direction,
-      amount: entry.amount.toString(),
-      createdAt: entry.createdAt,
-    }));
+    const hasMore = rows.length > STATEMENT_PAGE_SIZE;
+    const entries: StatementEntry[] = rows
+      .slice(0, STATEMENT_PAGE_SIZE)
+      .map((entry) => ({
+        id: entry.id,
+        source: entry.depositId ? 'deposit' : 'transfer',
+        transactionId: entry.transactionId,
+        depositId: entry.depositId,
+        direction: entry.direction,
+        amount: entry.amount.toString(),
+        createdAt: entry.createdAt,
+      }));
+
+    const statement: StatementPage = { entries, hasMore };
 
     await this.redisService.set(
       cacheKey,

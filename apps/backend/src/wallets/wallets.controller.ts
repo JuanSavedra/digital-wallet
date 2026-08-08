@@ -54,11 +54,11 @@ export class WalletsController {
     if (!wallet) {
       throw new NotFoundException('Carteira não encontrada');
     }
-    const entries = await this.walletsService.getStatement(
+    const statement = await this.walletsService.getStatement(
       wallet.id,
       query.page,
     );
-    return { page: query.page, entries };
+    return { page: query.page, ...statement };
   }
 
   // Cada chamada cria um produto E um checkout na AbacatePay: sem limite,
@@ -126,7 +126,7 @@ export class WalletsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: StatementQueryDto,
   ) {
-    const entries = await this.walletsService.getStatement(id, query.page);
-    return { page: query.page, entries };
+    const statement = await this.walletsService.getStatement(id, query.page);
+    return { page: query.page, ...statement };
   }
 }

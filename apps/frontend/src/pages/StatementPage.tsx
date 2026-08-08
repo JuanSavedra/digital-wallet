@@ -81,7 +81,7 @@ export function StatementPage() {
             <span>Página {page}</span>
             <button
               type="button"
-              disabled={isFetching || data.entries.length === 0}
+              disabled={isFetching || !data.hasMore}
               onClick={() => setPage((p) => p + 1)}
             >
               Próxima
